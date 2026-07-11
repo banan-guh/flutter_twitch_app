@@ -127,8 +127,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final ceilIdx = page.ceil().clamp(0, _channels.length - 1);
     final fraction = (page - page.floor()).clamp(0.0, 1.0);
 
-    debugPrint('[DRAG] page=${page.toStringAsFixed(3)} floor=$floorIdx ceil=$ceilIdx fraction=${fraction.toStringAsFixed(3)}');
-
     final viewportWidth = _channelScrollController.position.viewportDimension;
     final scrollA = (_itemPositions[floorIdx] - viewportWidth / 2 + _itemWidths[floorIdx] / 2)
         .clamp(0.0, _channelScrollController.position.maxScrollExtent);
@@ -460,19 +458,27 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _recentMessages.fetchRecent(name).then((history) {
       if (!mounted) return;
       _historyLoaded.add(name);
-      _channelMessages[name]?.remove(loadingMsg);
       setState(() {
-        final existing = _channelMessages[name]!;
-        final existingIds = existing.map((m) => m.messageId).toSet();
-        for (final msg in history) {
-          if (msg.messageId == null || !existingIds.contains(msg.messageId)) {
-            existing.insert(0, msg);
-          }
-          if (msg.messageId != null) {
-            _messageKeys.putIfAbsent('$name:${msg.messageId}', () => GlobalKey());
+        if (history.isEmpty) {
+          _addSystemMessage(name, 'No chat history available');
+        } else {
+          final existing = _channelMessages[name]!;
+          final existingIds = existing.map((m) => m.messageId).toSet();
+          for (final msg in history) {
+            if (msg.messageId == null || !existingIds.contains(msg.messageId)) {
+              existing.insert(0, msg);
+            }
+            if (msg.messageId != null) {
+              _messageKeys.putIfAbsent('$name:${msg.messageId}', () => GlobalKey());
+            }
           }
         }
       });
+      _maybeAddConnected(name);
+    }).catchError((e) {
+      if (!mounted) return;
+      _historyLoaded.add(name);
+      _addSystemMessage(name, 'Failed to load chat history ($e)');
       _maybeAddConnected(name);
     });
 
@@ -762,6 +768,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         currentUserLogin: _currentUserLogin,
         currentUserColor: _currentUserColor,
         rootMsg: rootMsg,
+        onUsernameTap: (username) {
+          Navigator.pop(ctx);
+          _showUserProfile(username, null);
+        },
       ),
     );
   }
@@ -778,6 +788,25 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         messages: msgs,
         currentUserLogin: _currentUserLogin,
         currentUserColor: _currentUserColor,
+        onUsernameTap: (username) {
+          Navigator.pop(ctx);
+          _showUserProfile(username, null);
+        },
+      ),
+    );
+  }
+
+  void _showUserProfile(String username, String? userId) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => _UserProfileSheet(
+        username: username,
+        userId: userId,
+        twitchAuth: widget.twitchAuth,
+        messageController: _messageController,
+        focusNode: _focusNode,
+        onClose: () => Navigator.pop(ctx),
       ),
     );
   }
@@ -786,77 +815,61 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final channel = _channels[index];
     if (_selectedChannel == channel) return;
 
-    debugPrint('[UNDERLINE] _selectChannel($index) channel=$channel');
-
     double? startContentX;
     if (_underway && _animStartContentX != null && _animEndContentX != null) {
       startContentX = _animStartContentX! +
           (_animEndContentX! - _animStartContentX!) *
               _underlineCurve.value;
-      debugPrint('[UNDERLINE] mid-animation startContentX=$startContentX curve=${_underlineCurve.value}');
     } else if (_selectedChannel != null && _itemPositions.isNotEmpty) {
       final prevIdx = _channels.indexOf(_selectedChannel!);
       if (prevIdx >= 0 && prevIdx < _itemPositions.length) {
         startContentX = _itemPositions[prevIdx];
-        debugPrint('[UNDERLINE] static startContentX=$startContentX (prevIdx=$prevIdx)');
       }
     }
 
     setState(() {
       _selectedChannel = channel;
     });
-    debugPrint('[UNDERLINE] setState done, curve.value=${_underlineCurve.value}');
 
     if (startContentX != null && index < _itemPositions.length) {
       final endContentX = _itemPositions[index];
       final distance = (endContentX - startContentX).abs();
-      debugPrint('[UNDERLINE] startContentX=$startContentX endContentX=$endContentX distance=$distance');
       if (distance > 0.5) {
         _animStartContentX = startContentX;
         _animEndContentX = endContentX;
         _underway = true;
         final duration = (200 + distance * 0.3).clamp(150, 300).toInt();
         _underlineAnimController.duration = Duration(milliseconds: duration);
-        debugPrint('[UNDERLINE] anim duration=${duration}ms starting forward');
         _underlineAnimController.forward(from: 0).then((_) {
-          debugPrint('[UNDERLINE] animation DONE');
           _underway = false;
           _animStartContentX = null;
           _animEndContentX = null;
           if (mounted) setState(() {});
         });
-      } else {
-        debugPrint('[UNDERLINE] distance too small, skipping animation');
       }
     }
 
     if (animatePageView) {
       _programmaticPageChange = true;
-      debugPrint('[UNDERLINE] starting page animateToPage($index)');
       _pageController.animateToPage(
         index,
         duration: const Duration(milliseconds: 250),
         curve: Curves.easeInOut,
       ).whenComplete(() {
-        debugPrint('[UNDERLINE] page animation complete');
         _programmaticPageChange = false;
       });
     }
-    debugPrint('[UNDERLINE] calling _requestScrollToChannel($index)');
     _requestScrollToChannel(index);
   }
 
   void _requestScrollToChannel(int index, {bool animate = true}) {
     final requestId = ++_scrollRequestId;
-    debugPrint('[UNDERLINE] _requestScrollToChannel requestId=$requestId');
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      debugPrint('[UNDERLINE] post-frame callback fires requestId=$requestId current=$_scrollRequestId');
       if (requestId != _scrollRequestId) return;
       if (!_channelScrollController.hasClients || index < 0 || index >= _channels.length) return;
       final viewportWidth = _channelScrollController.position.viewportDimension;
       final targetScroll = _itemPositions[index] - (viewportWidth / 2) + (_itemWidths[index] / 2);
       final clamped = targetScroll.clamp(0.0, _channelScrollController.position.maxScrollExtent);
-      debugPrint('[UNDERLINE] scrolling to $clamped (target=$targetScroll)');
       if (animate) {
         _channelScrollController.animateTo(
           clamped,
@@ -1145,6 +1158,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                               color: parseColor(msg.color, background: surface),
                               decoration: TextDecoration.none,
                             ),
+                            recognizer: TapGestureRecognizer()
+                              ..onTap = () => _showUserProfile(msg.username, msg.userId),
                           ),
                           ...parseTextWithLinks(msg.text),
                         ],
@@ -1278,12 +1293,14 @@ class _ThreadView extends StatefulWidget {
   final String? currentUserLogin;
   final String? currentUserColor;
   final TwitchMessage rootMsg;
+  final ValueChanged<String>? onUsernameTap;
 
   const _ThreadView({
     required this.messages,
     this.currentUserLogin,
     this.currentUserColor,
     required this.rootMsg,
+    this.onUsernameTap,
   });
 
   @override
@@ -1397,6 +1414,9 @@ class _ThreadViewState extends State<_ThreadView> {
                                           fontWeight: FontWeight.w600,
                                           color: parseColor(msg.color, background: surface),
                                         ),
+                                        recognizer: widget.onUsernameTap != null
+                                            ? (TapGestureRecognizer()..onTap = () => widget.onUsernameTap!(msg.username))
+                                            : null,
                                       ),
                                       TextSpan(
                                         text: msg.text,
@@ -1423,11 +1443,13 @@ class _MentionsView extends StatefulWidget {
   final List<TwitchMessage> messages;
   final String? currentUserLogin;
   final String? currentUserColor;
+  final ValueChanged<String>? onUsernameTap;
 
   const _MentionsView({
     required this.messages,
     this.currentUserLogin,
     this.currentUserColor,
+    this.onUsernameTap,
   });
 
   @override
@@ -1541,6 +1563,9 @@ class _MentionsViewState extends State<_MentionsView> {
                                           fontWeight: FontWeight.w600,
                                           color: parseColor(msg.color, background: surface),
                                         ),
+                                        recognizer: widget.onUsernameTap != null
+                                            ? (TapGestureRecognizer()..onTap = () => widget.onUsernameTap!(msg.username))
+                                            : null,
                                       ),
                                       TextSpan(
                                         text: msg.text,
@@ -1557,6 +1582,264 @@ class _MentionsViewState extends State<_MentionsView> {
                     },
                   ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _UserProfileSheet extends StatefulWidget {
+  final String username;
+  final String? userId;
+  final TwitchAuth twitchAuth;
+  final TextEditingController messageController;
+  final FocusNode focusNode;
+  final VoidCallback onClose;
+
+  const _UserProfileSheet({
+    required this.username,
+    this.userId,
+    required this.twitchAuth,
+    required this.messageController,
+    required this.focusNode,
+    required this.onClose,
+  });
+
+  @override
+  State<_UserProfileSheet> createState() => _UserProfileSheetState();
+}
+
+class _UserProfileSheetState extends State<_UserProfileSheet> {
+  Map<String, dynamic>? _profile;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchProfile();
+  }
+
+  Future<void> _fetchProfile() async {
+    try {
+      final profile = await TwitchApi.getUserProfile(widget.twitchAuth, widget.username);
+      if (!mounted) return;
+      if (profile != null) {
+        setState(() {
+          _profile = profile;
+          _loading = false;
+        });
+      } else {
+        setState(() {
+          _error = TwitchApi.lastError ?? 'User not found';
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  String _formatDate(String iso) {
+    try {
+      final dt = DateTime.parse(iso);
+      return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+    } catch (_) {
+      return iso;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 32,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[400],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          if (_loading) ...[
+            const Center(child: Padding(
+              padding: EdgeInsets.all(24),
+              child: CircularProgressIndicator(),
+            )),
+          ] else if (_error != null) ...[
+            Center(child: Text(_error!, style: const TextStyle(color: Colors.grey))),
+          ] else if (_profile != null) ...[
+            Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.network(
+                    _profile!['profile_image_url'] as String? ?? '',
+                    width: 64,
+                    height: 64,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => Container(
+                      width: 64,
+                      height: 64,
+                      color: theme.colorScheme.surfaceContainerHighest,
+                      child: Icon(Icons.person, size: 32, color: theme.colorScheme.onSurfaceVariant),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _profile!['display_name'] as String? ?? widget.username,
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                          color: theme.colorScheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Created: ${_formatDate(_profile!['created_at'] as String? ?? '')}',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Divider(height: 1, color: theme.dividerColor),
+            const SizedBox(height: 4),
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.alternate_email),
+              title: const Text('Mention user'),
+              onTap: () {
+                widget.onClose();
+                final text = widget.messageController.text;
+                final prefix = text.isEmpty ? '@${widget.username} ' : '@${widget.username} ';
+                widget.messageController.text = '$prefix$text';
+                widget.messageController.selection = TextSelection.fromPosition(
+                  TextPosition(offset: widget.messageController.text.length),
+                );
+                widget.focusNode.requestFocus();
+              },
+            ),
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.chat_bubble_outline),
+              title: const Text('Whisper user'),
+              onTap: () {
+                widget.onClose();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Whisper not yet supported')),
+                );
+              },
+            ),
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.block),
+              title: const Text('Block'),
+              onTap: () async {
+                final userId = widget.userId ?? _profile?['id'] as String?;
+                if (userId == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Cannot block: user ID unknown')),
+                  );
+                  return;
+                }
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('Block user'),
+                    content: Text('Block ${widget.username}? They will not be able to whisper you or host your channel.'),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                      FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Block')),
+                    ],
+                  ),
+                );
+                if (confirmed != true || !context.mounted) return;
+                final ok = await TwitchApi.blockUser(widget.twitchAuth, userId);
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(ok ? '${widget.username} blocked' : 'Block failed: ${TwitchApi.lastError ?? "unknown"}')),
+                );
+                widget.onClose();
+              },
+            ),
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.flag_outlined),
+              title: const Text('Report'),
+              onTap: () async {
+                final userId = widget.userId ?? _profile?['id'] as String?;
+                if (userId == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Cannot report: user ID unknown')),
+                  );
+                  return;
+                }
+                final reasonController = TextEditingController();
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('Report user'),
+                    content: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('Report ${widget.username} for:'),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: reasonController,
+                          decoration: const InputDecoration(
+                            hintText: 'Reason (optional)',
+                            border: OutlineInputBorder(),
+                          ),
+                          maxLines: 2,
+                        ),
+                      ],
+                    ),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                      FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Report')),
+                    ],
+                  ),
+                );
+                if (confirmed != true || !context.mounted) return;
+                final broadcasterId = _profile?['id'] as String? ?? userId;
+                final ok = await TwitchApi.reportUser(
+                  widget.twitchAuth,
+                  userId: userId,
+                  broadcasterId: broadcasterId,
+                  reason: reasonController.text,
+                );
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(ok ? 'Report submitted' : 'Report failed: ${TwitchApi.lastError ?? "unknown"}')),
+                );
+                widget.onClose();
+              },
+            ),
+          ],
         ],
       ),
     );

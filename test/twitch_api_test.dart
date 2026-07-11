@@ -176,4 +176,71 @@ void main() {
       expect(TwitchApi.lastError, contains('createDeleteSubscription'));
     });
   });
+
+  group('getUserProfile', () {
+    test('returns profile map on 200 with data', () async {
+      TwitchApi.client = MockClient((_) async => http.Response(
+          '{"data": [{"id": "123", "login": "testuser", "display_name": "TestUser", "created_at": "2020-01-01T00:00:00Z", "profile_image_url": "https://example.com/img.png"}]}', 200));
+
+      final result = await TwitchApi.getUserProfile(auth, 'testuser');
+      expect(result, isNotNull);
+      expect(result!['id'], '123');
+      expect(result['display_name'], 'TestUser');
+      expect(result['profile_image_url'], 'https://example.com/img.png');
+    });
+
+    test('returns null when data list is empty', () async {
+      TwitchApi.client =
+          MockClient((_) async => http.Response('{"data": []}', 200));
+
+      expect(await TwitchApi.getUserProfile(auth, 'nonexistent'), isNull);
+      expect(TwitchApi.lastError, contains('not found'));
+    });
+
+    test('returns null on non-200', () async {
+      TwitchApi.client =
+          MockClient((_) async => http.Response('Not Found', 404));
+
+      expect(await TwitchApi.getUserProfile(auth, 'testuser'), isNull);
+      expect(TwitchApi.lastError, contains('getUserProfile'));
+    });
+  });
+
+  group('blockUser', () {
+    test('returns true on 204', () async {
+      TwitchApi.client =
+          MockClient((_) async => http.Response('', 204));
+
+      expect(await TwitchApi.blockUser(auth, 'target123'), isTrue);
+    });
+
+    test('returns false on non-204', () async {
+      TwitchApi.client =
+          MockClient((_) async => http.Response('Forbidden', 403));
+
+      expect(await TwitchApi.blockUser(auth, 'target123'), isFalse);
+      expect(TwitchApi.lastError, contains('blockUser'));
+    });
+  });
+
+  group('reportUser', () {
+    test('returns true on 204', () async {
+      TwitchApi.client =
+          MockClient((_) async => http.Response('', 204));
+
+      expect(
+          await TwitchApi.reportUser(auth, userId: 'u1', broadcasterId: 'b1', reason: 'spam'),
+          isTrue);
+    });
+
+    test('returns false on non-204', () async {
+      TwitchApi.client =
+          MockClient((_) async => http.Response('Bad Request', 400));
+
+      expect(
+          await TwitchApi.reportUser(auth, userId: 'u1', broadcasterId: 'b1'),
+          isFalse);
+      expect(TwitchApi.lastError, contains('reportUser'));
+    });
+  });
 }

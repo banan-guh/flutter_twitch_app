@@ -164,6 +164,52 @@ class TwitchApi {
         'Content-Type': 'application/json',
       };
 
+  /// Returns full user profile for a given login.
+  /// Keys: id, login, display_name, description, profile_image_url, created_at, broadcaster_type.
+  static Future<Map<String, dynamic>?> getUserProfile(TwitchAuth auth, String login) async {
+    _lastError = null;
+    final uri = Uri.parse('$_base/users?login=$login');
+    final res = await _client.get(uri, headers: _headers(auth));
+    if (res.statusCode != 200) {
+      _setError('getUserProfile', res);
+      return null;
+    }
+    final data = jsonDecode(res.body) as Map;
+    final list = data['data'] as List;
+    if (list.isEmpty) {
+      _setError('User "$login" not found');
+      return null;
+    }
+    return list[0] as Map<String, dynamic>;
+  }
+
+  /// Blocks a user by ID. Requires user:manage:blocks scope.
+  static Future<bool> blockUser(TwitchAuth auth, String targetUserId) async {
+    _lastError = null;
+    final uri = Uri.parse('$_base/users/blocks?target_user_id=$targetUserId');
+    final res = await _client.put(uri, headers: _headers(auth));
+    if (res.statusCode == 204) return true;
+    _setError('blockUser', res);
+    return false;
+  }
+
+  /// Reports a user. Requires moderation:read scope.
+  static Future<bool> reportUser(TwitchAuth auth, {required String userId, required String broadcasterId, String reason = ''}) async {
+    _lastError = null;
+    final uri = Uri.parse('$_base/moderation/reports');
+    final body = jsonEncode({
+      'data': {
+        'user_id': userId,
+        'broadcaster_id': broadcasterId,
+        'reason': reason,
+      },
+    });
+    final res = await _client.post(uri, headers: _headers(auth), body: body);
+    if (res.statusCode == 204) return true;
+    _setError('reportUser', res);
+    return false;
+  }
+
   static void _setError(String label, [http.Response? res]) {
     if (res != null) {
       _lastError = '$label failed (${res.statusCode}): ${res.body}';

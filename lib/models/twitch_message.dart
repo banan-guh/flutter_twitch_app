@@ -12,6 +12,7 @@ class TwitchMessage {
   final String? replyToUser;
   final String? replyToText;
   bool isHighlighted;
+  String? userId;
 
   TwitchMessage({
     required this.username,
@@ -27,5 +28,6 @@ class TwitchMessage {
     this.replyToUser,
     this.replyToText,
     this.isHighlighted = false,
+    this.userId,
   }) : timestamp = timestamp ?? DateTime.now();
 }

@@ -12,6 +12,7 @@ Map<String, dynamic> _welcome({String id = 'session-abc', int timeout = 10}) => 
 Map<String, dynamic> _notification({
   required String subType,
   String? chatter = 'testuser',
+  String? chatterId,
   String? messageId,
   String text = 'hello',
   String? color,
@@ -28,6 +29,7 @@ Map<String, dynamic> _notification({
         },
         'event': <String, dynamic>{
           if (chatter != null) 'chatter_user_name': chatter,
+          if (chatterId != null) 'chatter_user_id': chatterId,
           if (messageId != null) 'message_id': messageId,
           'message': <String, dynamic>{'text': text},
           if (color != null) 'color': color,
@@ -138,6 +140,22 @@ void main() {
       expect(messages[0].messageId, 'msg-1');
       expect(messages[0].channel, 'testchannel');
       expect(messages[0].color, '#FF0000');
+    });
+
+    test('captures chatter_user_id', () async {
+      final messages = <TwitchMessage>[];
+      service.onMessage.listen(messages.add);
+
+      service.handleRawMessage(_notification(
+        subType: 'channel.chat.message',
+        chatter: 'testuser',
+        chatterId: 'uid-42',
+        messageId: 'msg-uid',
+        text: 'with id',
+      ));
+
+      expect(messages, hasLength(1));
+      expect(messages[0].userId, 'uid-42');
     });
 
     test('handles missing chatter name', () async {

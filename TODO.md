@@ -5,7 +5,7 @@
 - [ ] **Emotes & Badges** — Render Twitch emotes (global + channel) as images inline; render badges (mod, sub, VIP, etc). Non-negotiable feature, defer until core is solid.
 - [ ] **Command autocomplete** — When typing `/` in the input, show a dropdown of available IRC commands (`/ban`, `/timeout`, `/color`, `/me`, etc). MUST HAVE, high priority.
 - [ ] **IRC command support** — Route commands through IRC: `/ban`, `/timeout`, `/color`, `/me`, and any other standard Twitch `/` commands.
-- [ ] **User profiles** — Tap a username → bottom sheet (1/3 screen) with PFP top-left, display name and account creation date top-right, four buttons: Mention, Whisper, Block, Report.
+- [x] **User profiles** — Tap a username → bottom sheet (1/3 screen) with PFP top-left, display name and account creation date top-right, four buttons: Mention, Whisper, Block, Report.
 - [x] **Swipe between channels** — Swipe left/right on the chat area to move to the adjacent channel, in addition to tapping the channel bar.
 - [x] **Chat room state** — Display current channel chat status below the input box (e.g. "Followers-only", "Emote-only", "Sub-only", "Live with X viewers for Yh Zm").
 - [ ] **Thread view input** — Typing box inside the thread view; sending a message auto-replies to the most recent message in the thread.

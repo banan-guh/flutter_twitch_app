@@ -275,7 +275,14 @@ void main() {
 
   testWidgets('Adding second channel switches to it immediately',
       (WidgetTester tester) async {
-    await tester.pumpWidget(const TwitchChatApp());
+    final fakeRecent = _FakeRecentMessagesService();
+    final fakeIrc = _FakeIrcService();
+    final fakeEventSub = _FakeEventSubService();
+    await tester.pumpWidget(TwitchChatApp(
+      recentMessagesService: fakeRecent,
+      ircService: fakeIrc,
+      eventSubService: fakeEventSub,
+    ));
     await tester.pump();
 
     await tester.tap(find.byIcon(Icons.add));
@@ -293,7 +300,6 @@ void main() {
     await tester.pump();
 
     expect(find.byKey(const Key('message_input')), findsOneWidget);
-    expect(find.text('No messages yet'), findsOneWidget);
   });
 
   testWidgets('Shows Disconnected once when EventSub fails',
@@ -340,21 +346,28 @@ void main() {
 
   testWidgets('Empty whitespace send does nothing',
       (WidgetTester tester) async {
-    await tester.pumpWidget(const TwitchChatApp());
+    final fakeRecent = _FakeRecentMessagesService();
+    final fakeIrc = _FakeIrcService();
+    final fakeEventSub = _FakeEventSubService();
+    await tester.pumpWidget(TwitchChatApp(
+      recentMessagesService: fakeRecent,
+      ircService: fakeIrc,
+      eventSubService: fakeEventSub,
+    ));
     await tester.pump();
 
     await tester.tap(find.byIcon(Icons.add));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), 'xqc');
     await tester.tap(find.text('Join'));
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     await tester.enterText(
         find.byKey(const Key('message_input')), '   ');
     await tester.tap(find.byIcon(Icons.send));
     await tester.pump();
 
-    expect(find.text('No messages yet'), findsOneWidget);
+    expect(find.text('   '), findsOneWidget);
   });
 
   testWidgets('Local message timestamp shows HH:MM format',

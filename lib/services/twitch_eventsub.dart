@@ -153,6 +153,7 @@ class EventSubService {
     final channel = _channelFromPayload(msg);
 
     final chatter = event['chatter_user_name'] as String? ?? 'unknown';
+    final chatterId = event['chatter_user_id'] as String?;
     final messageData = event['message'] as Map<String, dynamic>?;
     final text = messageData?['text'] as String? ?? '';
     final color = event['color'] as String?;
@@ -184,6 +185,7 @@ class EventSubService {
       replyToParentId: replyParentId,
       replyToUser: replyUser,
       replyToText: replyText,
+      userId: chatterId,
     ));
   }
 

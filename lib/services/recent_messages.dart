@@ -8,28 +8,25 @@ class RecentMessagesService {
   static const _baseUrl = 'https://recent-messages.robotty.de/api/v2/recent-messages';
 
   Future<List<TwitchMessage>> fetchRecent(String channel) async {
-    try {
-      final uri = Uri.parse('$_baseUrl/${Uri.encodeComponent(channel.toLowerCase())}?limit=100');
-      final res = await http.get(uri).timeout(const Duration(seconds: 10));
+    final uri = Uri.parse('$_baseUrl/${Uri.encodeComponent(channel.toLowerCase())}?limit=100');
+    final res = await http.get(uri).timeout(const Duration(seconds: 10));
 
-      if (res.statusCode != 200) return [];
-
-      final body = jsonDecode(res.body) as Map<String, dynamic>;
-      final rawMessages = body['messages'] as List<dynamic>?;
-      if (rawMessages == null || rawMessages.isEmpty) return [];
-
-      final messages = <TwitchMessage>[];
-      for (final raw in rawMessages) {
-        final parsed = parseIrcLine(raw as String, channel: channel);
-        if (parsed != null) messages.add(parsed);
-      }
-
-      messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-      return messages;
-    } catch (e, s) {
-      debugPrint('recent-messages error: $e\n$s');
-      return [];
+    if (res.statusCode != 200) {
+      throw Exception('error ${res.statusCode}: ${res.reasonPhrase ?? "unknown"}');
     }
+
+    final body = jsonDecode(res.body) as Map<String, dynamic>;
+    final rawMessages = body['messages'] as List<dynamic>?;
+    if (rawMessages == null || rawMessages.isEmpty) return [];
+
+    final messages = <TwitchMessage>[];
+    for (final raw in rawMessages) {
+      final parsed = parseIrcLine(raw as String, channel: channel);
+      if (parsed != null) messages.add(parsed);
+    }
+
+    messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    return messages;
   }
 
   static TwitchMessage? parseIrcLine(String raw, {String? channel}) {
