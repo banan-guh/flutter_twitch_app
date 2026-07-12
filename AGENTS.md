@@ -8,7 +8,7 @@ See [TODO.md](TODO.md) for the feature roadmap.
 
 ```
 flutter run                # launch on connected device/emulator
-flutter test               # run all tests (129 total)
+flutter test               # run all tests (149 total)
 flutter analyze            # static analysis (uses package:flutter_lints)
 dart format .              # format all Dart files
 ```
@@ -33,7 +33,7 @@ dart format .              # format all Dart files
 
 ### test/
 
-- `test/widget_test.dart` — 36 tests: main screen renders, channel bar, reply threads (8), system messages (7), settings screen (7), connected/disconnected dedup, join channel dialog
+- `test/widget_test.dart` — 37 tests: main screen renders, channel bar, reply threads (9), system messages (7), settings screen (7), connected/disconnected dedup, join channel dialog
 - `test/twitch_eventsub_test.dart` — 20 tests: EventSub routing for all message types (channel.chat.message, channel.channel_points_custom_reward_redemption.add, channel.ban, channel.message_delete, channel.subscribe, channel.subscription.gift, channel.subscription.message, channel.cheer, channel.raid, channel.chat.user_message_hold)
 - `test/twitch_api_test.dart` — 15 tests: Helix API calls (getUser, createEventSubSubscription, deleteEventSubSubscription, getEventSubSubscriptions, sendChatMessage) with MockClient
 - `test/twitch_irc_test.dart` — 9 tests: IRC message parsing (PRIVMSG, CLEARCHAT with/without duration, NOTICE, JOIN, PART, PING, WHO)
@@ -66,6 +66,13 @@ dart format .              # format all Dart files
 - `SettingsScreen` accepts optional `OAuthStarter? oAuthStarter` param for mocking OAuth
 - `HomeScreen` / `TwitchChatApp` accept optional `EventSubService`, `IrcService`, `RecentMessagesService` for injection
 - `StreamController.broadcast()` uses `sync: true` for synchronous event delivery in tests
+
+## Consistency
+
+When adding or modifying UI, keep patterns consistent across the codebase:
+- **Long-press menus**: Use `InkWell` (not `GestureDetector`) for `onLongPress` handlers on messages. `InkWell` provides `HitTestBehavior.opaque` by default, which works correctly inside `ListView.builder`. `GestureDetector` defaults to `deferToChild` and can silently fail in scrollable contexts.
+- **Message rendering**: The main chat (`_buildChat`) and thread panel (`_buildThreadPanel`) are separate code paths. When adding message features (long-press menus, tap handlers, layout), apply the same pattern to both.
+- **Test coverage**: When fixing a gesture or interaction bug, add a test that reproduces the exact gesture (e.g., `tester.longPress`) in the affected context (e.g., inside the thread panel, not just the main chat).
 
 ## Bug fixes
 

@@ -178,7 +178,7 @@ void main() {
     await tester.tap(find.byIcon(Icons.add));
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField), 'xqc');
+    await tester.enterText(find.byType(TextField).last, 'xqc');
     await tester.tap(find.text('Join'));
     await tester.pump();
 
@@ -213,7 +213,7 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.add));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'xqc');
+    await tester.enterText(find.byType(TextField).last, 'xqc');
     await tester.tap(find.text('Join'));
     await tester.pump();
 
@@ -228,7 +228,7 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.add));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'xqc');
+    await tester.enterText(find.byType(TextField).last, 'xqc');
     await tester.tap(find.text('Join'));
     await tester.pump();
 
@@ -255,7 +255,7 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.add));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'xqc');
+    await tester.enterText(find.byType(TextField).last, 'xqc');
     await tester.tap(find.text('Join'));
     await tester.pump();
 
@@ -267,7 +267,7 @@ void main() {
     expect(find.text('Mentions / Whispers'), findsOneWidget);
     expect(find.text('No mentions or whispers'), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.close));
+    await tester.tap(find.byIcon(Icons.notifications_outlined));
     await tester.pumpAndSettle();
 
     expect(find.text('Mentions / Whispers'), findsNothing);
@@ -287,7 +287,7 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.add));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'xqc');
+    await tester.enterText(find.byType(TextField).last, 'xqc');
     await tester.tap(find.text('Join'));
     await tester.pump();
 
@@ -312,7 +312,7 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.add));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'xqc');
+    await tester.enterText(find.byType(TextField).last, 'xqc');
     await tester.tap(find.text('Join'));
     await tester.pump();
 
@@ -329,7 +329,7 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.add));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'xqc');
+    await tester.enterText(find.byType(TextField).last, 'xqc');
     await tester.tap(find.text('Join'));
     await tester.pumpAndSettle();
 
@@ -358,7 +358,7 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.add));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'xqc');
+    await tester.enterText(find.byType(TextField).last, 'xqc');
     await tester.tap(find.text('Join'));
     await tester.pumpAndSettle();
 
@@ -377,7 +377,7 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.add));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'xqc');
+    await tester.enterText(find.byType(TextField).last, 'xqc');
     await tester.tap(find.text('Join'));
     await tester.pump();
 
@@ -409,7 +409,7 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.add));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'testchannel');
+    await tester.enterText(find.byType(TextField).last, 'testchannel');
     await tester.tap(find.text('Join'));
     await tester.pumpAndSettle();
 
@@ -671,6 +671,34 @@ void main() {
       expect(find.text('Reply Thread'), findsOneWidget);
       expect(find.textContaining('original msg'), findsAtLeast(1));
       expect(find.textContaining('my reply'), findsAtLeast(1));
+    });
+
+    testWidgets('long-press message inside thread panel opens context menu',
+        (WidgetTester tester) async {
+      const channel = 'testchannel';
+      final parent = TwitchMessage(
+        username: 'alice', text: 'parent msg', messageId: 'p1',
+        timestamp: now.subtract(const Duration(minutes: 5)), channel: channel,
+      );
+      final child = TwitchMessage(
+        username: 'bob', text: 'child msg', messageId: 'c1',
+        replyToParentId: 'p1', replyToUser: 'alice', replyToText: 'parent msg',
+        timestamp: now.subtract(const Duration(minutes: 4)),
+        isHistory: true, channel: channel,
+      );
+      await joinChannel(tester, channelName: channel, history: [parent, child]);
+
+      await tester.tap(find.textContaining('replying to alice: parent msg'));
+      await tester.pumpAndSettle();
+      expect(find.text('Reply Thread'), findsOneWidget);
+
+      final childInThread = find.textContaining('bob: child msg');
+      expect(childInThread, findsAtLeast(1));
+      await tester.longPress(childInThread.last);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Copy message'), findsOneWidget);
+      expect(find.text('More...'), findsOneWidget);
     });
   });
 

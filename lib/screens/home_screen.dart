@@ -61,12 +61,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   bool _programmaticPageChange = false;
   int _unreadMentions = 0;
   TwitchMessage? _replyToMsg;
+  TwitchMessage? _openThreadRoot;
+  bool _showingMentions = false;
 
   late final AnimationController _underlineAnimController;
   late final CurvedAnimation _underlineCurve;
   double? _animStartContentX;
   double? _animEndContentX;
   bool _underway = false;
+
+  late final AnimationController _panelAnimController;
+  late final CurvedAnimation _panelCurve;
 
   StreamSubscription<TwitchMessage>? _messageSub;
   StreamSubscription<EventSubStatus>? _statusSub;
@@ -92,6 +97,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       parent: _underlineAnimController,
       curve: Curves.easeInOut,
     );
+    _panelAnimController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 250),
+    );
+    _panelCurve = CurvedAnimation(
+      parent: _panelAnimController,
+      curve: Curves.easeOutCubic,
+    );
+    _panelAnimController.addListener(() {
+      if (mounted) setState(() {});
+    });
     _connect();
   }
 
@@ -152,6 +168,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _ircNoticeSub?.cancel();
     _underlineCurve.dispose();
     _underlineAnimController.dispose();
+    _panelCurve.dispose();
+    _panelAnimController.dispose();
     _channelScrollController.dispose();
     _pageController.dispose();
     for (final c in _scrollControllers.values) {
@@ -369,6 +387,35 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   _showThreadView(threadRoot);
                 },
               ),
+            ListTile(
+              leading: const Icon(Icons.copy),
+              title: const Text('Copy message'),
+              onTap: () {
+                Clipboard.setData(ClipboardData(text: msg.text));
+                Navigator.pop(ctx);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.more_horiz),
+              title: const Text('More...'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showMoreMenu(msg);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showThreadMessageMenu(TwitchMessage msg) {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
             ListTile(
               leading: const Icon(Icons.copy),
               title: const Text('Copy message'),
@@ -662,20 +709,28 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void _sendMessage() {
     final text = _messageController.text.trim();
     final channel = _selectedChannel;
-    if (text.isEmpty || channel == null || channel == _mentionsChannel) return;
+    if (text.isEmpty || channel == null || _showingMentions) return;
 
     _messageController.clear();
-    _doSendMessage(text, channel);
+
+    final threadRoot = _openThreadRoot;
+    if (threadRoot != null) {
+      final threadMsgs = _computeThreadMessages();
+      final lastMsg = threadMsgs.isNotEmpty ? threadMsgs.last : null;
+      _doSendMessage(text, channel, replyTo: lastMsg);
+    } else {
+      _doSendMessage(text, channel);
+    }
   }
 
-  void _doSendMessage(String text, String channel) async {
+  void _doSendMessage(String text, String channel, {TwitchMessage? replyTo}) async {
     final auth = widget.twitchAuth;
     if (_currentUserId != null && auth.isConfigured) {
       final color = await TwitchApi.getUserChatColor(auth, _currentUserId!);
       if (color != null) _currentUserColor = color;
     }
 
-    final reply = _replyToMsg;
+    final reply = replyTo ?? _replyToMsg;
     if (_currentUserLogin != null && auth.isConfigured) {
       _irc.sendMessage(channel, text, replyParentMessageId: reply?.messageId);
     }
@@ -733,11 +788,46 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void _showThreadView(TwitchMessage rootMsg) {
     final channel = rootMsg.channel;
     if (channel == null) return;
+    if (_selectedChannel != channel) {
+      final idx = _channels.indexOf(channel);
+      if (idx >= 0) _selectChannel(idx);
+    }
+    setState(() {
+      _showingMentions = false;
+      _openThreadRoot = rootMsg;
+    });
+    _panelAnimController.forward(from: 0);
+  }
+
+  void _showMentionsView() {
+    setState(() {
+      _openThreadRoot = null;
+      _showingMentions = true;
+    });
+    _panelAnimController.forward(from: 0);
+  }
+
+  void _closePanel() {
+    _panelAnimController.reverse().then((_) {
+      if (mounted) {
+        setState(() {
+          _openThreadRoot = null;
+          _showingMentions = false;
+        });
+      }
+    });
+  }
+
+  List<TwitchMessage> _computeThreadMessages() {
+    final root = _openThreadRoot;
+    if (root == null) return const [];
+    final channel = root.channel;
+    if (channel == null) return const [];
     final allMsgs = _channelMessages[channel] ?? [];
 
     final threadIds = <String>{};
     final threadMsgs = <TwitchMessage>[];
-    if (rootMsg.messageId != null) threadIds.add(rootMsg.messageId!);
+    if (root.messageId != null) threadIds.add(root.messageId!);
 
     bool added;
     do {
@@ -756,42 +846,300 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     } while (added);
 
     threadMsgs.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    return threadMsgs;
+  }
 
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      constraints: const BoxConstraints(maxWidth: double.infinity),
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
-      builder: (ctx) => _ThreadView(
-        messages: threadMsgs,
-        currentUserLogin: _currentUserLogin,
-        currentUserColor: _currentUserColor,
-        rootMsg: rootMsg,
-        onUsernameTap: (username) {
-          Navigator.pop(ctx);
-          _showUserProfile(username, null);
-        },
+  Widget _buildThreadPanel() {
+    final root = _openThreadRoot;
+    if (root == null) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    final surface = theme.colorScheme.surface;
+    final threadMsgs = _computeThreadMessages();
+
+    return Material(
+      color: theme.scaffoldBackgroundColor,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          GestureDetector(
+            onVerticalDragUpdate: (details) {
+              final newValue = (_panelAnimController.value - details.primaryDelta! / context.size!.height).clamp(0.0, 1.0);
+              _panelAnimController.value = newValue;
+            },
+            onVerticalDragEnd: (details) {
+              if (_panelAnimController.value < 0.5 || (details.primaryVelocity ?? 0) < -200) {
+                _closePanel();
+              } else {
+                _panelAnimController.forward();
+              }
+            },
+            child: const Padding(
+              padding: EdgeInsets.only(top: 8, bottom: 8),
+              child: Center(
+                child: SizedBox(
+                  width: 32,
+                  height: 4,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Colors.grey,
+                      borderRadius: BorderRadius.all(Radius.circular(2)),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Material(
+            elevation: 2,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: _closePanel,
+                  ),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      'Reply Thread',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: theme.colorScheme.onSurface,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Divider(height: 1, color: theme.dividerColor),
+          Expanded(
+            child: threadMsgs.isEmpty
+                ? const Center(child: Text('No messages found'))
+                : ListView.builder(
+                    reverse: true,
+                    padding: const EdgeInsets.only(bottom: 8),
+                    itemCount: threadMsgs.length,
+                    itemBuilder: (_, i) {
+                      final msg = threadMsgs[threadMsgs.length - 1 - i];
+                      final ts = '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}';
+
+                      if (msg.isSystem) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              SizedBox(
+                                width: 45,
+                                child: Text(ts, textAlign: TextAlign.right,
+                                  style: const TextStyle(fontSize: 13, color: Colors.grey),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(msg.text,
+                                  style: const TextStyle(fontSize: 13, color: Colors.grey),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+
+                      return InkWell(
+                        onLongPress: () {
+                          _showThreadMessageMenu(msg);
+                        },
+                        child: Opacity(
+                        opacity: msg.deleted ? 0.35 : 1,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              SizedBox(
+                                width: 45,
+                                child: Text(ts, textAlign: TextAlign.right,
+                                  style: const TextStyle(fontSize: 14, color: Colors.grey),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text.rich(
+                                  TextSpan(
+                                    children: [
+                                      TextSpan(
+                                        text: '${msg.username}: ',
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                          color: parseColor(msg.color, background: surface),
+                                        ),
+                                      ),
+                                      TextSpan(
+                                        text: msg.text,
+                                        style: const TextStyle(fontSize: 14),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
       ),
     );
   }
 
-  void _showMentionsView() {
+  Widget _buildMentionsPanel() {
     final msgs = _channelMessages[_mentionsChannel] ?? [];
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      constraints: const BoxConstraints(maxWidth: double.infinity),
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
-      builder: (ctx) => _MentionsView(
-        messages: msgs,
-        currentUserLogin: _currentUserLogin,
-        currentUserColor: _currentUserColor,
-        onUsernameTap: (username) {
-          Navigator.pop(ctx);
-          _showUserProfile(username, null);
-        },
+    final theme = Theme.of(context);
+    final surface = theme.colorScheme.surface;
+
+    return Material(
+      color: theme.scaffoldBackgroundColor,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          GestureDetector(
+            onVerticalDragUpdate: (details) {
+              final newValue = (_panelAnimController.value - details.primaryDelta! / context.size!.height).clamp(0.0, 1.0);
+              _panelAnimController.value = newValue;
+            },
+            onVerticalDragEnd: (details) {
+              if (_panelAnimController.value < 0.5 || (details.primaryVelocity ?? 0) < -200) {
+                _closePanel();
+              } else {
+                _panelAnimController.forward();
+              }
+            },
+            child: const Padding(
+              padding: EdgeInsets.only(top: 8, bottom: 8),
+              child: Center(
+                child: SizedBox(
+                  width: 32,
+                  height: 4,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Colors.grey,
+                      borderRadius: BorderRadius.all(Radius.circular(2)),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Material(
+            elevation: 2,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.arrow_back),
+                    onPressed: _closePanel,
+                  ),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      'Mentions / Whispers',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: theme.colorScheme.onSurface,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Divider(height: 1, color: theme.dividerColor),
+          Expanded(
+            child: msgs.isEmpty
+                ? const Center(child: Text('No mentions or whispers'))
+                : ListView.builder(
+                    reverse: true,
+                    padding: const EdgeInsets.only(bottom: 8),
+                    itemCount: msgs.length,
+                    itemBuilder: (_, i) {
+                      final msg = msgs[msgs.length - 1 - i];
+                      final ts = '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}';
+
+                      if (msg.isSystem) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              SizedBox(
+                                width: 45,
+                                child: Text(ts, textAlign: TextAlign.right,
+                                  style: const TextStyle(fontSize: 13, color: Colors.grey),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(msg.text,
+                                  style: const TextStyle(fontSize: 13, color: Colors.grey),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+
+                      return Opacity(
+                        opacity: msg.deleted ? 0.35 : 1,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              SizedBox(
+                                width: 45,
+                                child: Text(ts, textAlign: TextAlign.right,
+                                  style: const TextStyle(fontSize: 14, color: Colors.grey),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text.rich(
+                                  TextSpan(
+                                    children: [
+                                      TextSpan(
+                                        text: '${msg.username}: ',
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                          color: parseColor(msg.color, background: surface),
+                                        ),
+                                      ),
+                                      TextSpan(
+                                        text: msg.text,
+                                        style: const TextStyle(fontSize: 14),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
       ),
     );
   }
@@ -829,7 +1177,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     setState(() {
       _selectedChannel = channel;
+      _openThreadRoot = null;
+      _showingMentions = false;
     });
+    _panelAnimController.stop();
 
     if (startContentX != null && index < _itemPositions.length) {
       final endContentX = _itemPositions[index];
@@ -892,117 +1243,48 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final dividerColor = theme.dividerColor;
 
     return Scaffold(
-      appBar: AppBar(
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            tooltip: 'Join channel',
-            onPressed: _addChannelDialog,
-          ),
-          IconButton(
-            icon: _unreadMentions > 0
-                ? Badge(
-                    label: Text('$_unreadMentions'),
-                    child: const Icon(Icons.notifications_outlined),
-                  )
-                : const Icon(Icons.notifications_outlined),
-            tooltip: 'Mentions',
-            onPressed: () {
-              _unreadMentions = 0;
-              if (mounted) setState(() {});
-              _showMentionsView();
-            },
-          ),
-          SettingsButton(
-            twitchAuth: widget.twitchAuth,
-            onThemeChanged: widget.onThemeChanged,
-            channelNotifier: _channelNotifier,
-            onLeaveChannel: _removeChannel,
-            onAddChannel: _addChannel,
-            onSettingsClosed: () {
-              if (mounted) setState(() {});
-              _connect();
-            },
-          ),
-        ],
-      ),
       body: Column(
         children: [
-          if (_channels.isNotEmpty)
-            Container(
-              decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: dividerColor)),
-              ),
-              child: SizedBox(
-                height: 40,
-                child: Stack(
-                  children: [
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: ScrollbarTheme(
-                        data: const ScrollbarThemeData(thickness: WidgetStatePropertyAll(0)),
-                        child: SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        controller: _channelScrollController,
-                        physics: const ClampingScrollPhysics(),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: _channels.map((channel) {
-                            final selected = channel == _selectedChannel;
-                            return GestureDetector(
-                              behavior: HitTestBehavior.translucent,
-                              onTap: () => _selectChannel(
-                                _channels.indexOf(channel),
-                              ),
-                              child: Container(
-                                key: _channelItemKeys.putIfAbsent(channel, () => GlobalKey()),
-                                padding: const EdgeInsets.symmetric(horizontal: 12),
-                                height: 40,
-                                alignment: Alignment.center,
-                                child: Text(
-                                  channel,
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                                    color: selected ? theme.colorScheme.primary : null,
-                                  ),
-                                ),
-                              ),
-                            );
-                          }).toList(),
-                        ),
-                      ),
-                    ),
+          SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.add),
+                    tooltip: 'Join channel',
+                    onPressed: _addChannelDialog,
                   ),
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: CustomPaint(
-                        key: _underlineKey,
-                        painter: ChannelUnderlinePainter(
-                          scrollController: _channelScrollController,
-                          pageController: _pageController,
-                          itemPositions: _itemPositions,
-                          itemWidths: _itemWidths,
-                          selectedIndex: _selectedChannel == null
-                              ? -1
-                              : _channels.indexOf(_selectedChannel!),
-                          color: theme.colorScheme.primary,
-                          underlineAnimation: _underway ? _underlineCurve : null,
-                          animStartContentX: _underway ? _animStartContentX : null,
-                          animEndContentX: _underway ? _animEndContentX : null,
-                          repaint: _underway
-                              ? Listenable.merge([
-                                  _channelScrollController,
-                                  _pageController,
-                                  _underlineCurve,
-                                ])
-                              : Listenable.merge([
-                                  _channelScrollController,
-                                  _pageController,
-                                ]),
-                        ),
-                      ),
-                    ),
+                  IconButton(
+                    icon: _unreadMentions > 0
+                        ? Badge(
+                            label: Text('$_unreadMentions'),
+                            child: const Icon(Icons.notifications_outlined),
+                          )
+                        : const Icon(Icons.notifications_outlined),
+                    tooltip: 'Mentions',
+                    onPressed: () {
+                      _unreadMentions = 0;
+                      if (mounted) setState(() {});
+                      if (_showingMentions) {
+                        _closePanel();
+                      } else {
+                        _showMentionsView();
+                      }
+                    },
+                  ),
+                  const Spacer(),
+                  SettingsButton(
+                    twitchAuth: widget.twitchAuth,
+                    onThemeChanged: widget.onThemeChanged,
+                    channelNotifier: _channelNotifier,
+                    onLeaveChannel: _removeChannel,
+                    onAddChannel: _addChannel,
+                    onSettingsClosed: () {
+                      if (mounted) setState(() {});
+                      _connect();
+                    },
                   ),
                 ],
               ),
@@ -1010,55 +1292,168 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ),
           Expanded(
             child: _channels.isNotEmpty
-                ? Column(
-                    children: [
-                      Expanded(
-                        child: ScrollConfiguration(
-                          behavior: ScrollConfiguration.of(context).copyWith(
-                            dragDevices: {
-                              PointerDeviceKind.touch,
-                              PointerDeviceKind.mouse,
-                              PointerDeviceKind.stylus,
-                              PointerDeviceKind.unknown,
-                            },
-                          ),
-                          child: NotificationListener<ScrollNotification>(
-                            onNotification: _onPageScrollNotification,
-                            child: PageView.builder(
-                              controller: _pageController,
-                              itemCount: _channels.length,
-                              onPageChanged: (i) {
-                                if (_programmaticPageChange) return;
-                                setState(() {
-                                  _selectedChannel = _channels[i];
-                                });
-                                _requestScrollToChannel(i);
-                              },
-                              itemBuilder: (_, i) => _buildChat(_channels[i]),
+                ? LayoutBuilder(
+                    builder: (context, constraints) {
+                      final stackHeight = constraints.maxHeight;
+                      return Stack(
+                        clipBehavior: Clip.hardEdge,
+                        children: [
+                          Column(
+                            children: [
+                              Container(
+                            decoration: BoxDecoration(
+                              border: Border(bottom: BorderSide(color: dividerColor)),
+                            ),
+                            child: SizedBox(
+                              height: 40,
+                              child: Stack(
+                                children: [
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: ScrollbarTheme(
+                                      data: const ScrollbarThemeData(thickness: WidgetStatePropertyAll(0)),
+                                      child: SingleChildScrollView(
+                                      scrollDirection: Axis.horizontal,
+                                      controller: _channelScrollController,
+                                      physics: const ClampingScrollPhysics(),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: _channels.map((channel) {
+                                          final selected = channel == _selectedChannel;
+                                          return GestureDetector(
+                                            behavior: HitTestBehavior.translucent,
+                                            onTap: () => _selectChannel(
+                                              _channels.indexOf(channel),
+                                            ),
+                                            child: Container(
+                                              key: _channelItemKeys.putIfAbsent(channel, () => GlobalKey()),
+                                              padding: const EdgeInsets.symmetric(horizontal: 12),
+                                              height: 40,
+                                              alignment: Alignment.center,
+                                              child: Text(
+                                                channel,
+                                                style: TextStyle(
+                                                  fontSize: 14,
+                                                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                                                  color: selected ? theme.colorScheme.primary : null,
+                                                ),
+                                              ),
+                                            ),
+                                          );
+                                        }).toList(),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                Positioned.fill(
+                                  child: IgnorePointer(
+                                    child: CustomPaint(
+                                      key: _underlineKey,
+                                      painter: ChannelUnderlinePainter(
+                                        scrollController: _channelScrollController,
+                                        pageController: _pageController,
+                                        itemPositions: _itemPositions,
+                                        itemWidths: _itemWidths,
+                                        selectedIndex: _selectedChannel == null
+                                            ? -1
+                                            : _channels.indexOf(_selectedChannel!),
+                                        color: theme.colorScheme.primary,
+                                        underlineAnimation: _underway ? _underlineCurve : null,
+                                        animStartContentX: _underway ? _animStartContentX : null,
+                                        animEndContentX: _underway ? _animEndContentX : null,
+                                        repaint: _underway
+                                            ? Listenable.merge([
+                                                _channelScrollController,
+                                                _pageController,
+                                                _underlineCurve,
+                                              ])
+                                            : Listenable.merge([
+                                                _channelScrollController,
+                                                _pageController,
+                                              ]),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                        ),
-                      ),
-                      _MessageInput(
-                        controller: _messageController,
-                        focusNode: _focusNode,
-                        onSend: _sendMessage,
-                        replyToMsg: _replyToMsg,
-                        onCancelReply: () => setState(() => _replyToMsg = null),
-                      ),
-                      if (_chatStatus[_selectedChannel] != null && _chatStatus[_selectedChannel]!.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(left: 12, right: 12, bottom: 4),
-                          child: Text(
-                            _chatStatus[_selectedChannel]!,
-                            style: const TextStyle(fontSize: 12, color: Colors.grey),
-                            textAlign: TextAlign.center,
                           ),
+                          Expanded(
+                            child: ScrollConfiguration(
+                              behavior: ScrollConfiguration.of(context).copyWith(
+                                dragDevices: {
+                                  PointerDeviceKind.touch,
+                                  PointerDeviceKind.mouse,
+                                  PointerDeviceKind.stylus,
+                                  PointerDeviceKind.unknown,
+                                },
+                              ),
+                              child: NotificationListener<ScrollNotification>(
+                                onNotification: _onPageScrollNotification,
+                                child: PageView.builder(
+                                  controller: _pageController,
+                                  itemCount: _channels.length,
+                                  onPageChanged: (i) {
+                                    if (_programmaticPageChange) return;
+                                    setState(() {
+                                      _selectedChannel = _channels[i];
+                                      _openThreadRoot = null;
+                                      _showingMentions = false;
+                                    });
+                                    _requestScrollToChannel(i);
+                                  },
+                                  itemBuilder: (_, i) => _buildChat(_channels[i]),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (_openThreadRoot != null)
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          top: (1 - _panelCurve.value) * stackHeight,
+                          height: stackHeight,
+                          child: _buildThreadPanel(),
                         ),
-                    ],
+                      if (_showingMentions)
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          top: (1 - _panelCurve.value) * stackHeight,
+                          height: stackHeight,
+                          child: _buildMentionsPanel(),
+                        ),
+                        ],
+                      );
+                    },
                   )
                 : _buildEmpty(),
           ),
+          _MessageInput(
+            controller: _messageController,
+            focusNode: _focusNode,
+            onSend: _sendMessage,
+            replyToMsg: _replyToMsg,
+            onCancelReply: () => setState(() => _replyToMsg = null),
+            enabled: !_showingMentions,
+            hintText: _openThreadRoot != null
+                ? 'Reply to thread...'
+                : _showingMentions
+                    ? 'Type a message...'
+                    : null,
+          ),
+          if (_chatStatus[_selectedChannel] != null && _chatStatus[_selectedChannel]!.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 12, right: 12, bottom: 4),
+              child: Text(
+                _chatStatus[_selectedChannel]!,
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+                textAlign: TextAlign.center,
+              ),
+            ),
         ],
       ),
     );
@@ -1286,306 +1681,6 @@ List<InlineSpan> parseTextWithLinks(String text) {
     spans.add(TextSpan(text: text.substring(lastEnd)));
   }
   return spans;
-}
-
-class _ThreadView extends StatefulWidget {
-  final List<TwitchMessage> messages;
-  final String? currentUserLogin;
-  final String? currentUserColor;
-  final TwitchMessage rootMsg;
-  final ValueChanged<String>? onUsernameTap;
-
-  const _ThreadView({
-    required this.messages,
-    this.currentUserLogin,
-    this.currentUserColor,
-    required this.rootMsg,
-    this.onUsernameTap,
-  });
-
-  @override
-  State<_ThreadView> createState() => _ThreadViewState();
-}
-
-class _ThreadViewState extends State<_ThreadView> {
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final surface = theme.colorScheme.surface;
-
-    return DraggableScrollableSheet(
-      initialChildSize: 1.0,
-      minChildSize: 1.0,
-      maxChildSize: 1.0,
-      expand: false,
-      builder: (context, scrollController) => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const SizedBox(height: 8),
-          Center(
-            child: Container(
-              width: 32,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[400],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.pop(context),
-                ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    'Reply Thread',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: theme.colorScheme.onSurface,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Divider(height: 1, color: theme.dividerColor),
-          Expanded(
-            child: widget.messages.isEmpty
-                ? const Center(child: Text('No messages found'))
-                : ListView.builder(
-                    controller: scrollController,
-                    itemCount: widget.messages.length,
-                    itemBuilder: (_, i) {
-                      final msg = widget.messages[i];
-                      final ts = '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}';
-
-                      if (msg.isSystem) {
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              SizedBox(
-                                width: 45,
-                                child: Text(ts, textAlign: TextAlign.right,
-                                  style: const TextStyle(fontSize: 13, color: Colors.grey),
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              Expanded(
-                                child: Text(msg.text,
-                                  style: const TextStyle(fontSize: 13, color: Colors.grey),
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      }
-
-                      return Opacity(
-                        opacity: msg.deleted ? 0.35 : 1,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              SizedBox(
-                                width: 45,
-                                child: Text(ts, textAlign: TextAlign.right,
-                                  style: const TextStyle(fontSize: 14, color: Colors.grey),
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              Expanded(
-                                child: Text.rich(
-                                  TextSpan(
-                                    children: [
-                                      TextSpan(
-                                        text: '${msg.username}: ',
-                                        style: TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600,
-                                          color: parseColor(msg.color, background: surface),
-                                        ),
-                                        recognizer: widget.onUsernameTap != null
-                                            ? (TapGestureRecognizer()..onTap = () => widget.onUsernameTap!(msg.username))
-                                            : null,
-                                      ),
-                                      TextSpan(
-                                        text: msg.text,
-                                        style: const TextStyle(fontSize: 14),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MentionsView extends StatefulWidget {
-  final List<TwitchMessage> messages;
-  final String? currentUserLogin;
-  final String? currentUserColor;
-  final ValueChanged<String>? onUsernameTap;
-
-  const _MentionsView({
-    required this.messages,
-    this.currentUserLogin,
-    this.currentUserColor,
-    this.onUsernameTap,
-  });
-
-  @override
-  State<_MentionsView> createState() => _MentionsViewState();
-}
-
-class _MentionsViewState extends State<_MentionsView> {
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final surface = theme.colorScheme.surface;
-
-    return DraggableScrollableSheet(
-      initialChildSize: 1.0,
-      minChildSize: 1.0,
-      maxChildSize: 1.0,
-      expand: false,
-      builder: (context, scrollController) => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const SizedBox(height: 8),
-          Center(
-            child: Container(
-              width: 32,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[400],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.pop(context),
-                ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    'Mentions / Whispers',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: theme.colorScheme.onSurface,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Divider(height: 1, color: theme.dividerColor),
-          Expanded(
-            child: widget.messages.isEmpty
-                ? const Center(child: Text('No mentions or whispers'))
-                : ListView.builder(
-                    controller: scrollController,
-                    itemCount: widget.messages.length,
-                    itemBuilder: (_, i) {
-                      final msg = widget.messages[i];
-                      final ts = '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}';
-
-                      if (msg.isSystem) {
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              SizedBox(
-                                width: 45,
-                                child: Text(ts, textAlign: TextAlign.right,
-                                  style: const TextStyle(fontSize: 13, color: Colors.grey),
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              Expanded(
-                                child: Text(msg.text,
-                                  style: const TextStyle(fontSize: 13, color: Colors.grey),
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      }
-
-                      return Opacity(
-                        opacity: msg.deleted ? 0.35 : 1,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              SizedBox(
-                                width: 45,
-                                child: Text(ts, textAlign: TextAlign.right,
-                                  style: const TextStyle(fontSize: 14, color: Colors.grey),
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              Expanded(
-                                child: Text.rich(
-                                  TextSpan(
-                                    children: [
-                                      TextSpan(
-                                        text: '${msg.username}: ',
-                                        style: TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600,
-                                          color: parseColor(msg.color, background: surface),
-                                        ),
-                                        recognizer: widget.onUsernameTap != null
-                                            ? (TapGestureRecognizer()..onTap = () => widget.onUsernameTap!(msg.username))
-                                            : null,
-                                      ),
-                                      TextSpan(
-                                        text: msg.text,
-                                        style: const TextStyle(fontSize: 14),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _UserProfileSheet extends StatefulWidget {
@@ -1852,6 +1947,8 @@ class _MessageInput extends StatelessWidget {
   final VoidCallback onSend;
   final TwitchMessage? replyToMsg;
   final VoidCallback? onCancelReply;
+  final bool enabled;
+  final String? hintText;
 
   const _MessageInput({
     required this.controller,
@@ -1859,17 +1956,20 @@ class _MessageInput extends StatelessWidget {
     required this.onSend,
     this.replyToMsg,
     this.onCancelReply,
+    this.enabled = true,
+    this.hintText,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final effectiveHint = hintText ?? 'Type a message...';
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (replyToMsg != null)
+          if (replyToMsg != null && enabled)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
@@ -1918,8 +2018,9 @@ class _MessageInput extends StatelessWidget {
                   key: const Key('message_input'),
                   controller: controller,
                   focusNode: focusNode,
+                  enabled: enabled,
                   decoration: InputDecoration(
-                    hintText: replyToMsg != null ? 'Reply...' : 'Type a message...',
+                    hintText: effectiveHint,
                     border: const OutlineInputBorder(),
                   ),
                   onSubmitted: (_) => onSend(),
@@ -1928,7 +2029,7 @@ class _MessageInput extends StatelessWidget {
               const SizedBox(width: 8),
               IconButton(
                 icon: const Icon(Icons.send),
-                onPressed: onSend,
+                onPressed: enabled ? onSend : null,
               ),
             ],
           ),
