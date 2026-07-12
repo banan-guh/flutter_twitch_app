@@ -105,9 +105,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       parent: _panelAnimController,
       curve: Curves.easeOutCubic,
     );
-    _panelAnimController.addListener(() {
-      if (mounted) setState(() {});
-    });
     _connect();
   }
 
@@ -1410,21 +1407,35 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           ),
                         ],
                       ),
-                      if (_openThreadRoot != null)
+                       if (_openThreadRoot != null)
                         Positioned(
                           left: 0,
                           right: 0,
-                          top: (1 - _panelCurve.value) * stackHeight,
+                          top: 0,
                           height: stackHeight,
-                          child: _buildThreadPanel(),
+                          child: AnimatedBuilder(
+                            animation: _panelCurve,
+                            builder: (context, child) => Transform.translate(
+                              offset: Offset(0, (1 - _panelCurve.value) * stackHeight),
+                              child: child,
+                            ),
+                            child: _buildThreadPanel(),
+                          ),
                         ),
                       if (_showingMentions)
                         Positioned(
                           left: 0,
                           right: 0,
-                          top: (1 - _panelCurve.value) * stackHeight,
+                          top: 0,
                           height: stackHeight,
-                          child: _buildMentionsPanel(),
+                          child: AnimatedBuilder(
+                            animation: _panelCurve,
+                            builder: (context, child) => Transform.translate(
+                              offset: Offset(0, (1 - _panelCurve.value) * stackHeight),
+                              child: child,
+                            ),
+                            child: _buildMentionsPanel(),
+                          ),
                         ),
                         ],
                       );
@@ -1432,28 +1443,36 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   )
                 : _buildEmpty(),
           ),
-          _MessageInput(
-            controller: _messageController,
-            focusNode: _focusNode,
-            onSend: _sendMessage,
-            replyToMsg: _replyToMsg,
-            onCancelReply: () => setState(() => _replyToMsg = null),
-            enabled: !_showingMentions,
-            hintText: _openThreadRoot != null
-                ? 'Reply to thread...'
-                : _showingMentions
-                    ? 'Type a message...'
-                    : null,
-          ),
-          if (_chatStatus[_selectedChannel] != null && _chatStatus[_selectedChannel]!.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(left: 12, right: 12, bottom: 4),
-              child: Text(
-                _chatStatus[_selectedChannel]!,
-                style: const TextStyle(fontSize: 12, color: Colors.grey),
-                textAlign: TextAlign.center,
-              ),
+          ColoredBox(
+            color: theme.scaffoldBackgroundColor,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _MessageInput(
+                  controller: _messageController,
+                  focusNode: _focusNode,
+                  onSend: _sendMessage,
+                  replyToMsg: _replyToMsg,
+                  onCancelReply: () => setState(() => _replyToMsg = null),
+                  enabled: !_showingMentions,
+                  hintText: _openThreadRoot != null
+                      ? 'Reply to thread...'
+                      : _showingMentions
+                          ? 'Type a message...'
+                          : null,
+                ),
+                if (_chatStatus[_selectedChannel] != null && _chatStatus[_selectedChannel]!.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 12, right: 12, bottom: 4),
+                    child: Text(
+                      _chatStatus[_selectedChannel]!,
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+              ],
             ),
+          ),
         ],
       ),
     );
