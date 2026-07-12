@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
+
 import 'package:http/http.dart' as http;
 import '../models/twitch_message.dart';
 import '../color_utils.dart';

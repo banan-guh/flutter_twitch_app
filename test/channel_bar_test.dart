@@ -32,13 +32,13 @@ void main() {
     await tester.pump();
   }
 
-  Finder _underlineCustomPaint() => find.descendant(
+  Finder underlineCustomPaint() => find.descendant(
         of: find.byType(Positioned),
         matching: find.byType(CustomPaint),
       );
 
-  ChannelUnderlinePainter _underlinePainter(WidgetTester tester) {
-    final cp = tester.widget<CustomPaint>(_underlineCustomPaint());
+  ChannelUnderlinePainter underlinePainter(WidgetTester tester) {
+    final cp = tester.widget<CustomPaint>(underlineCustomPaint());
     return cp.painter! as ChannelUnderlinePainter;
   }
 
@@ -48,7 +48,7 @@ void main() {
       await tester.pumpWidget(const TwitchChatApp());
       await tester.pump();
 
-      expect(_underlineCustomPaint(), findsNothing);
+      expect(underlineCustomPaint(), findsNothing);
     });
 
     testWidgets('renders channel name after joining',
@@ -95,7 +95,7 @@ void main() {
 
       await joinChannel(tester, 'xqc');
 
-      final painter = _underlinePainter(tester);
+      final painter = underlinePainter(tester);
       expect(painter.selectedIndex, 0);
       expect(painter.itemWidths[painter.selectedIndex], greaterThan(0));
     });
@@ -108,12 +108,12 @@ void main() {
       await joinChannel(tester, 'short');
       await joinChannel(tester, 'longername');
 
-      final painterBefore = _underlinePainter(tester);
+      final painterBefore = underlinePainter(tester);
       final leftBefore = painterBefore.itemPositions[painterBefore.selectedIndex];
 
       await tapChannel(tester, 'short');
 
-      final painterAfter = _underlinePainter(tester);
+      final painterAfter = underlinePainter(tester);
       final leftAfter = painterAfter.itemPositions[painterAfter.selectedIndex];
 
       expect(leftBefore, greaterThan(leftAfter));
@@ -126,7 +126,7 @@ void main() {
 
       await joinChannel(tester, 'xqc');
 
-      final painter = _underlinePainter(tester);
+      final painter = underlinePainter(tester);
       expect(painter.underlineHeight, 2.0);
     });
 
@@ -160,7 +160,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('xqc'), findsNothing);
-      expect(_underlineCustomPaint(), findsNothing);
+      expect(underlineCustomPaint(), findsNothing);
     });
 
     testWidgets('multiple channels render in the bar',

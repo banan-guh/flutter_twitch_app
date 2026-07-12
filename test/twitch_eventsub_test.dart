@@ -28,12 +28,12 @@ Map<String, dynamic> _notification({
           'condition': <String, dynamic>{'broadcaster_user_id': 'broadcaster1'},
         },
         'event': <String, dynamic>{
-          if (chatter != null) 'chatter_user_name': chatter,
-          if (chatterId != null) 'chatter_user_id': chatterId,
-          if (messageId != null) 'message_id': messageId,
+          'chatter_user_name': ?chatter,
+          'chatter_user_id': ?chatterId,
+          'message_id': ?messageId,
           'message': <String, dynamic>{'text': text},
-          if (color != null) 'color': color,
-          if (reply != null) 'reply': reply,
+          'color': ?color,
+          'reply': ?reply,
         },
       },
     };
@@ -48,7 +48,7 @@ Map<String, dynamic> _deleteEvent({String? messageId, String targetUser = 'delet
           'condition': <String, dynamic>{'broadcaster_user_id': 'broadcaster1'},
         },
         'event': <String, dynamic>{
-          if (messageId != null) 'message_id': messageId,
+          'message_id': ?messageId,
           'target_user_name': targetUser,
         },
       },
@@ -70,8 +70,8 @@ Map<String, dynamic> _banEvent({
         },
         'event': <String, dynamic>{
           'user_name': user,
-          if (reason != null) 'reason': reason,
-          if (endsAt != null) 'ends_at': endsAt,
+          'reason': ?reason,
+          'ends_at': ?endsAt,
         },
       },
     };
