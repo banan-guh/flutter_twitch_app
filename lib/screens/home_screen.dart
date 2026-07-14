@@ -13,6 +13,7 @@ import '../services/emote_manager.dart';
 import '../widgets/settings.dart';
 import '../widgets/channel_underline_painter.dart';
 import '../widgets/emote_text.dart';
+import '../widgets/chat_message_tile.dart';
 import '../color_utils.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -90,6 +91,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   String? _currentUserLogin;
   String? _currentUserId;
   String? _currentUserColor;
+  String? _lastSentText;
   bool _wasConnected = false;
   bool _wasDisconnected = false;
   EventSubStatus _connectionStatus = EventSubStatus.disconnected;
@@ -281,13 +283,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         if (currentUser != null) {
           _currentUserLogin = currentUser['login'];
           _currentUserId = currentUser['id'];
-          if (_currentUserId != null) {
-            final color = await TwitchApi.getUserChatColor(
-              auth,
-              _currentUserId!,
-            );
-            if (color != null) _currentUserColor = color;
-          }
+
         }
       } catch (_) {}
     }
@@ -335,9 +331,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         login != null && !msg.isSystem && msg.username.toLowerCase() == login;
 
     if (isOwn) {
+      if (msg.color != null && msg.color!.isNotEmpty) {
+        _currentUserColor = msg.color;
+      }
       bool updated = false;
       final msgs = _channelMessages[channel];
       if (msgs != null) {
+        // Skip if Helix already reconciled this messageId.
+        if (msg.messageId != null &&
+            msgs.any((e) => e.messageId == msg.messageId)) {
+          return;
+        }
         for (final existing in msgs) {
           if (existing.username == msg.username &&
               existing.text == msg.text &&
@@ -393,7 +397,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     if (login != null &&
         msg.username.toLowerCase() == login &&
-        msg.color != null) {
+        msg.color != null &&
+        msg.color!.isNotEmpty) {
       _currentUserColor = msg.color;
     }
 
@@ -819,6 +824,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final channel = _selectedChannel;
     if (text.isEmpty || channel == null || _showingMentions) return;
 
+    _lastSentText = text;
     _messageController.clear();
 
     final threadRoot = _openThreadRoot;
@@ -846,30 +852,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       return;
     }
 
-    // Refresh chat color before sending.
-    if (_currentUserId != null && auth.isConfigured) {
-      final color = await TwitchApi.getUserChatColor(auth, _currentUserId!);
-      if (color != null) _currentUserColor = color;
-    }
+    final tempId = DateTime.now().microsecondsSinceEpoch.toString();
 
-    // Regular messages: send via Helix API (IRC commands deprecated Feb 2023).
-    if (_currentUserId != null && auth.isConfigured) {
-      final broadcasterId = _channelUserIds[channel];
-      if (broadcasterId != null) {
-        await TwitchApi.sendChatMessage(
-          auth,
-          broadcasterId: broadcasterId,
-          senderId: _currentUserId!,
-          message: text,
-          replyParentMessageId: reply?.messageId,
-        );
-      } else {
-        _irc.sendMessage(channel, text, replyParentMessageId: reply?.messageId);
-      }
-    } else {
-      _irc.sendMessage(channel, text, replyParentMessageId: reply?.messageId);
-    }
-
+    // Insert local echo immediately so the render is not gated on the HTTP
+    // round-trip. Reconcile with the real message ID once the API responds.
     if (!mounted) return;
     setState(() {
       _replyToMsg = null;
@@ -885,20 +871,75 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         TwitchMessage(
           username: _currentUserLogin ?? 'You',
           text: text,
-          color:
-              _currentUserColor ??
-              (_currentUserLogin != null
+          color: (_currentUserColor != null && _currentUserColor!.isNotEmpty)
+              ? _currentUserColor
+              : (_currentUserLogin != null
                   ? pickColor(_currentUserLogin!)
                   : null),
           channel: channel,
           replyToParentId: reply?.messageId,
           replyToUser: reply?.username,
           replyToText: reply?.text,
+          tempId: tempId,
         ),
       );
       _truncateChannelMessages(channel);
     });
     _focusNode.requestFocus();
+
+    // Fire the API call — render already shows the echo.
+    if (_currentUserId != null && auth.isConfigured) {
+      final broadcasterId = _channelUserIds[channel];
+      if (broadcasterId != null) {
+        final messageId = await TwitchApi.sendChatMessage(
+          auth,
+          broadcasterId: broadcasterId,
+          senderId: _currentUserId!,
+          message: text,
+          replyParentMessageId: reply?.messageId,
+        );
+        _reconcileLocalEcho(channel, tempId, messageId);
+      } else {
+        _irc.sendMessage(channel, text,
+            replyParentMessageId: reply?.messageId);
+      }
+    } else {
+      _irc.sendMessage(channel, text,
+          replyParentMessageId: reply?.messageId);
+    }
+  }
+
+  void _onSendLongPress() {
+    if (_lastSentText != null && _lastSentText!.isNotEmpty) {
+      _messageController.text = _lastSentText!;
+      _messageController.selection = TextSelection.fromPosition(
+        TextPosition(offset: _messageController.text.length),
+      );
+      _focusNode.requestFocus();
+    }
+  }
+
+  void _reconcileLocalEcho(
+      String channel, String tempId, String? messageId) {
+    if (!mounted) return;
+    setState(() {
+      final msgs = _channelMessages[channel];
+      if (msgs == null) return;
+      for (final msg in msgs) {
+        if (msg.tempId == tempId) {
+          if (messageId != null) {
+            msg.messageId = messageId;
+            _messageKeys.putIfAbsent(
+              '$channel:$messageId',
+              () => GlobalKey(),
+            );
+          } else {
+            msg.sendFailed = TwitchApi.lastError ?? 'Unknown error';
+          }
+          break;
+        }
+      }
+    });
   }
 
   /// Handles slash commands by routing to the appropriate Twitch API endpoint.
@@ -1305,114 +1346,58 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}';
 
                       if (msg.isSystem) {
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 2,
-                          ),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              SizedBox(
-                                width: 45,
-                                child: Text(
-                                  ts,
-                                  textAlign: TextAlign.right,
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              Expanded(
-                                child: Text(
-                                  msg.text,
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
+                        return ChatMessageTile(
+                          timestamp: ts,
+                          isHistory: msg.isHistory,
+                          children: [TextSpan(text: msg.text)],
+                          timestampFontSize: 13,
+                          bodyFontSize: 13,
                         );
                       }
 
-                      return InkWell(
-                        onLongPress: () {
-                          _showThreadMessageMenu(msg);
-                        },
-                        child: Opacity(
-                          opacity: msg.deleted ? 0.35 : 1,
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 2,
-                            ),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                SizedBox(
-                                  width: 45,
-                                  child: Text(
-                                    ts,
-                                    textAlign: TextAlign.right,
-                                    style: const TextStyle(
-                                      fontSize: 14,
-                                      color: Colors.grey,
-                                    ),
-                                  ),
+                      return ChatMessageTile(
+                        timestamp: ts,
+                        deleted: msg.deleted,
+                        isHistory: msg.isHistory,
+                        children: [
+                          if (msg.isAction) ...[
+                            TextSpan(
+                              text: '${msg.username} ',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: parseColor(
+                                  msg.color,
+                                  background: surface,
                                 ),
-                                const SizedBox(width: 4),
-                                Expanded(
-                                  child: Text.rich(
-                                    TextSpan(
-                                      children: msg.isAction
-                                          ? [
-                                              TextSpan(
-                                                text: '${msg.username} ',
-                                                style: TextStyle(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w600,
-                                                  color: parseColor(
-                                                    msg.color,
-                                                    background: surface,
-                                                  ),
-                                                ),
-                                              ),
-                                              ..._buildMessageSpans(
-                                                msg,
-                                                msg.channel ?? '',
-                                                surface,
-                                                colored: true,
-                                              ),
-                                            ]
-                                          : [
-                                              TextSpan(
-                                                text: '${msg.username}: ',
-                                                style: TextStyle(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w600,
-                                                  color: parseColor(
-                                                    msg.color,
-                                                    background: surface,
-                                                  ),
-                                                ),
-                                              ),
-                                              ..._buildMessageSpans(
-                                                msg,
-                                                msg.channel ?? '',
-                                                surface,
-                                              ),
-                                            ],
-                                    ),
-                                  ),
-                                ),
-                              ],
+                              ),
                             ),
-                          ),
-                        ),
+                            ..._buildMessageSpans(
+                              msg,
+                              msg.channel ?? '',
+                              surface,
+                              colored: true,
+                            ),
+                          ] else ...[
+                            TextSpan(
+                              text: '${msg.username}: ',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: parseColor(
+                                  msg.color,
+                                  background: surface,
+                                ),
+                              ),
+                            ),
+                            ..._buildMessageSpans(
+                              msg,
+                              msg.channel ?? '',
+                              surface,
+                            ),
+                          ],
+                        ],
+                        onLongPress: () => _showThreadMessageMenu(msg),
                       );
                     },
                   ),
@@ -1503,117 +1488,65 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}';
 
                       if (msg.isSystem) {
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 2,
-                          ),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              SizedBox(
-                                width: 45,
-                                child: Text(
-                                  ts,
-                                  textAlign: TextAlign.right,
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              Expanded(
-                                child: Text(
-                                  msg.text,
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
+                        return ChatMessageTile(
+                          timestamp: ts,
+                          isHistory: msg.isHistory,
+                          children: [TextSpan(text: msg.text)],
+                          timestampFontSize: 13,
+                          bodyFontSize: 13,
                         );
                       }
 
-                      return Opacity(
-                        opacity: msg.deleted ? 0.35 : 1,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 2,
-                          ),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              SizedBox(
-                                width: 45,
-                                child: Text(
-                                  ts,
-                                  textAlign: TextAlign.right,
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey,
-                                  ),
+                      return ChatMessageTile(
+                        timestamp: ts,
+                        deleted: msg.deleted,
+                        isHistory: msg.isHistory,
+                        children: [
+                          if (msg.isAction) ...[
+                            TextSpan(
+                              text: '${msg.username} ',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: parseColor(
+                                  msg.color,
+                                  background: surface,
                                 ),
                               ),
-                              const SizedBox(width: 4),
-                              Expanded(
-                                child: Text.rich(
-                                  TextSpan(
-                                    children: msg.isAction
-                                        ? [
-                                            TextSpan(
-                                              text: '${msg.username} ',
-                                              style: TextStyle(
-                                                fontSize: 14,
-                                                fontWeight: FontWeight.w600,
-                                                color: parseColor(
-                                                  msg.color,
-                                                  background: surface,
-                                                ),
-                                              ),
-                                            ),
-                                            ..._buildMessageSpans(
-                                              msg,
-                                              msg.channel ?? '',
-                                              surface,
-                                              colored: true,
-                                            ),
-                                          ]
-                                        : [
-                                            TextSpan(
-                                              text: '${msg.username}: ',
-                                              style: TextStyle(
-                                                fontSize: 14,
-                                                fontWeight: FontWeight.w600,
-                                                color: parseColor(
-                                                  msg.color,
-                                                  background: surface,
-                                                ),
-                                              ),
-                                            ),
-                                            ..._buildMessageSpans(
-                                              msg,
-                                              msg.channel ?? '',
-                                              surface,
-                                            ),
-                                          ],
-                                  ),
+                            ),
+                            ..._buildMessageSpans(
+                              msg,
+                              msg.channel ?? '',
+                              surface,
+                              colored: true,
+                            ),
+                          ] else ...[
+                            TextSpan(
+                              text: '${msg.username}: ',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: parseColor(
+                                  msg.color,
+                                  background: surface,
                                 ),
                               ),
-                            ],
-                          ),
-                        ),
+                            ),
+                            ..._buildMessageSpans(
+                              msg,
+                              msg.channel ?? '',
+                              surface,
+                            ),
+                          ],
+                        ],
                       );
                     },
                   ),
-          ),
-        ],
-      ),
-    );
-  }
+                ),
+              ],
+            ),
+          );
+        }
 
   void _showUserProfile(String username, String? userId) {
     showModalBottomSheet(
@@ -2006,6 +1939,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   controller: _messageController,
                   focusNode: _focusNode,
                   onSend: _sendMessage,
+                  onSendLongPress: _onSendLongPress,
                   replyToMsg: _replyToMsg,
                   onCancelReply: () => setState(() => _replyToMsg = null),
                   enabled: !_showingMentions,
@@ -2119,138 +2053,39 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}';
 
           if (msg.isSystem) {
-            body = Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(
-                    width: 45,
-                    child: Text(
-                      ts,
-                      textAlign: TextAlign.right,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey,
-                        decoration: TextDecoration.none,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text.rich(
-                      TextSpan(
-                        children: parseTextWithLinks(msg.text),
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey,
-                          decoration: TextDecoration.none,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+            body = ChatMessageTile(
+              timestamp: ts,
+              isHistory: msg.isHistory,
+              children: parseTextWithLinks(msg.text),
+              useTextDecorationNone: true,
             );
           } else {
-            body = Opacity(
-              opacity: msg.deleted ? 0.35 : 1,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 2,
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      width: 45,
-                      child: Text(
-                        ts,
-                        textAlign: TextAlign.right,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey,
-                          decoration: TextDecoration.none,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text.rich(
-                        TextSpan(
-                          children: [
-                            TextSpan(
-                              text: msg.isAction
-                                  ? '${msg.username} '
-                                  : '${msg.username}: ',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: msg.isAction
-                                    ? parseColor(msg.color, background: surface)
-                                    : parseColor(
-                                        msg.color,
-                                        background: surface,
-                                      ),
-                                decoration: TextDecoration.none,
-                              ),
-                              recognizer: TapGestureRecognizer()
-                                ..onTap = () =>
-                                    _showUserProfile(msg.username, msg.userId),
-                            ),
-                            if (msg.isAction)
-                              ..._buildMessageSpans(
-                                msg,
-                                channel,
-                                surface,
-                                colored: true,
-                              )
-                            else
-                              ..._buildMessageSpans(msg, channel, surface),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }
-
-          if (msg.isHighlighted) {
-            body = Container(
-              color: Colors.red.withValues(alpha: 0.06),
-              child: Stack(
-                children: [
-                  body,
-                  Positioned(
-                    left: 0,
-                    top: 0,
-                    bottom: 0,
-                    child: Container(
-                      width: 3,
-                      color: Colors.red.withValues(alpha: 0.4),
-                    ),
+            body = ChatMessageTile(
+              timestamp: ts,
+              deleted: msg.deleted,
+              isHistory: msg.isHistory,
+              children: [
+                TextSpan(
+                  text: msg.isAction ? '${msg.username} ' : '${msg.username}: ',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: parseColor(msg.color, background: surface),
+                    decoration: TextDecoration.none,
                   ),
-                ],
-              ),
-            );
-          }
-
-          if (msg.replyToUser != null) {
-            body = InkWell(
-              onLongPress: msg.isSystem ? null : () => _showMessageMenu(msg),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [_buildReplyIndicator(msg), body],
-              ),
-            );
-          } else if (!msg.isSystem) {
-            body = InkWell(
+                  recognizer: TapGestureRecognizer()
+                    ..onTap = () =>
+                        _showUserProfile(msg.username, msg.userId),
+                ),
+                if (msg.isAction)
+                  ..._buildMessageSpans(msg, channel, surface, colored: true)
+                else
+                  ..._buildMessageSpans(msg, channel, surface),
+              ],
+              useTextDecorationNone: true,
+              isHighlighted: msg.isHighlighted,
+              replyIndicator: msg.replyToUser != null ? _buildReplyIndicator(msg) : null,
               onLongPress: () => _showMessageMenu(msg),
-              child: body,
             );
           }
 
@@ -2612,6 +2447,7 @@ class _MessageInput extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
   final VoidCallback onSend;
+  final VoidCallback? onSendLongPress;
   final TwitchMessage? replyToMsg;
   final VoidCallback? onCancelReply;
   final bool enabled;
@@ -2621,6 +2457,7 @@ class _MessageInput extends StatelessWidget {
     required this.controller,
     required this.focusNode,
     required this.onSend,
+    this.onSendLongPress,
     this.replyToMsg,
     this.onCancelReply,
     this.enabled = true,
@@ -2684,27 +2521,46 @@ class _MessageInput extends StatelessWidget {
                 ],
               ),
             ),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  key: const Key('message_input'),
-                  controller: controller,
-                  focusNode: focusNode,
-                  enabled: enabled,
-                  decoration: InputDecoration(
-                    hintText: effectiveHint,
-                    border: const OutlineInputBorder(),
+          TextField(
+            key: const Key('message_input'),
+            controller: controller,
+            focusNode: focusNode,
+            enabled: enabled,
+            decoration: InputDecoration(
+              labelText: effectiveHint,
+              border: const OutlineInputBorder(),
+              prefixIcon: SizedBox(
+                width: 48,
+                height: 48,
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(24),
+                    onTap: () {},
+                    child: const Icon(Icons.emoji_emotions_outlined),
                   ),
-                  onSubmitted: (_) => onSend(),
                 ),
               ),
-              const SizedBox(width: 8),
-              IconButton(
-                icon: const Icon(Icons.send),
-                onPressed: enabled ? onSend : null,
+              suffixIcon: SizedBox(
+                width: 48,
+                height: 48,
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(24),
+                    onTap: enabled ? onSend : null,
+                    onLongPress: enabled ? onSendLongPress : null,
+                    child: Icon(
+                      Icons.send,
+                      color: enabled
+                          ? Theme.of(context).colorScheme.primary
+                          : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.38),
+                    ),
+                  ),
+                ),
               ),
-            ],
+            ),
+            onSubmitted: (_) => onSend(),
           ),
         ],
       ),

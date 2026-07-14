@@ -29,6 +29,8 @@ class TwitchMessage {
   bool isHighlighted;
   String? userId;
   final List<EmotePosition>? emotePositions;
+  final String? tempId;
+  String? sendFailed;
 
   TwitchMessage({
     required this.username,
@@ -47,5 +49,7 @@ class TwitchMessage {
     this.isHighlighted = false,
     this.userId,
     this.emotePositions,
+    this.tempId,
+    this.sendFailed,
   }) : timestamp = timestamp ?? DateTime.now();
 }

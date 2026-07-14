@@ -69,30 +69,6 @@ void main() {
     });
   });
 
-  group('getUserChatColor', () {
-    test('returns color hex on 200 with data', () async {
-      TwitchApi.client = MockClient((_) async => http.Response(
-          '{"data": [{"color": "#FF0000"}]}', 200));
-
-      expect(await TwitchApi.getUserChatColor(auth, '1'), '#FF0000');
-    });
-
-    test('returns null when data list is empty', () async {
-      TwitchApi.client =
-          MockClient((_) async => http.Response('{"data": []}', 200));
-
-      expect(await TwitchApi.getUserChatColor(auth, '1'), isNull);
-    });
-
-    test('returns null on non-200', () async {
-      TwitchApi.client =
-          MockClient((_) async => http.Response('Bad Request', 400));
-
-      expect(await TwitchApi.getUserChatColor(auth, '1'), isNull);
-      expect(TwitchApi.lastError, contains('getUserChatColor'));
-    });
-  });
-
   group('createSubscription', () {
     test('returns true on 202', () async {
       TwitchApi.client =

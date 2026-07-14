@@ -51,23 +51,6 @@ class TwitchApi {
     return {'id': list[0]['id'] as String, 'login': list[0]['login'] as String};
   }
 
-  static Future<String?> getUserChatColor(
-    TwitchAuth auth,
-    String userId,
-  ) async {
-    _lastError = null;
-    final uri = Uri.parse('$_base/chat/color?user_id=$userId');
-    final res = await _client.get(uri, headers: _headers(auth));
-    if (res.statusCode != 200) {
-      _setError('getUserChatColor', res);
-      return null;
-    }
-    final data = jsonDecode(res.body) as Map;
-    final list = data['data'] as List;
-    if (list.isEmpty) return null;
-    return list[0]['color'] as String?;
-  }
-
   static Future<bool> createSubscription({
     required TwitchAuth auth,
     required String sessionId,
