@@ -20,12 +20,19 @@
 - [ ] **Unread indicator** — Channel tab name is white when there are unread messages, grey when all are read.
 - [ ] **Localized display names** — Research how Twitch handles localized/non-ASCII display names and ensure the app handles them correctly.
 
+## Bugs
+
+- [ ] **IRC fallback creates unreachable pending** — When `_channelUserIds[channel]` is null (e.g. `_subscribeChannel` failed silently), `_doSendMessage` falls through to IRC with a pending entry that has no `_pendingByMessageId` mapping. EventSub can never match it, so the message stays "unconfirmed" permanently. Fix: queue until `broadcasterId` resolves, or skip pending creation when Helix path isn't available. See `home_screen.dart:913`.
+- [ ] **White highlight of notifications** — If notifications appear (e.g. system messages, whispers, mentions), they light up with white highlight. Not sure what causes this; need to investigate.
+- [ ] **Fix Twitch emote rendering** — Emotes display incorrectly. Investigate emote parsing, URL generation, or image sizing to get them rendering properly.
+- [ ] **Fix 7TV system messages** — 7TV emotes/system messages not rendering correctly. Investigate and fix.
+
 ## Research / Open Ends
 
 - [ ] **Rate limit enforcement** — Enforce the 20-msg / 30-sec limit before Twitch does, with a toggle to disable. Research Twitch's exact rate limit behavior to decide on implementation.
 
 ## Low Priority / Future
 
-- [ ] **Vertical scrolling (desktop)** — Mouse wheel doesn't change channels on desktop. `PointerScrollEvent` is consumed by the inner `ListView.builder` before reaching any outer `Listener`. Not a priority since this is a mobile app.
 - [ ] **OS notifications + background** — Push notifications when mentioned/whispered while app is backgrounded; run keepalive in background.
 - [ ] **Different mode** — Toggleable type box visibility and fullscreen.
+- [ ] **Robotty history bot backup** — Add fallback/backup for recent-messages.robotty.de service.

@@ -65,11 +65,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   int _scrollRequestId = 0;
   bool _programmaticPageChange = false;
   int _unreadMentions = 0;
+  final _channelsWithUnread = <String>{};
+
   TwitchMessage? _replyToMsg;
   TwitchMessage? _openThreadRoot;
   bool _showingMentions = false;
   int _maxMessagesPerChannel = 200;
   double _uiScale = 1.0;
+
+  int _tempIdCounter = 0;
+  final _pendingByMessageId = <String, String>{};
+  final _pendingTimers = <String, Timer>{};
 
   late final AnimationController _underlineAnimController;
   late final CurvedAnimation _underlineCurve;
@@ -90,7 +96,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   String? _currentUserLogin;
   String? _currentUserId;
-  String? _currentUserColor;
   String? _lastSentText;
   bool _wasConnected = false;
   bool _wasDisconnected = false;
@@ -202,6 +207,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _ircBanSub?.cancel();
     _eventSub.dispose();
     _irc.dispose();
+    for (final t in _pendingTimers.values) {
+      t.cancel();
+    }
+    _pendingTimers.clear();
     _emoteManager.removeListener(_onEmotesChanged);
     _messageController.dispose();
     _focusNode.dispose();
@@ -222,10 +231,56 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Future<void> _connect() async {
     final auth = widget.twitchAuth;
+
+    // Always listen for EventSub messages/incoming data, regardless of auth
+    // state. In tests these come from injected fake services; in production
+    // they flow from the EventSub WebSocket once connected.
+    _messageSub ??= _eventSub.onMessage.listen(_onMessage);
+    _deleteSub ??= _eventSub.onMessageDeleted.listen((event) {
+      if (!mounted) return;
+      final msgs = _channelMessages[event.channel];
+      if (msgs == null) return;
+      String? deletedUser;
+      String? deletedText;
+      for (final msg in msgs) {
+        if (msg.messageId == event.messageId && !msg.isSystem) {
+          msg.deleted = true;
+          deletedUser = msg.username;
+          deletedText = msg.text;
+          break;
+        }
+      }
+      if (deletedUser != null && deletedText != null) {
+        _addSystemMessage(
+          event.channel,
+          'A message from $deletedUser was deleted saying: "$deletedText".',
+        );
+      }
+    });
+
+    _ircBanSub?.cancel();
+    _ircBanSub = _irc.onBan.listen((event) {
+      if (!mounted) return;
+      final text = event.isTimeout
+          ? '${event.user} was timed out${event.duration != null ? ' for ${event.duration}s' : ''}.'
+          : '${event.user} was banned.';
+      _addSystemMessage(event.channel, text);
+    });
+
+    _ircNoticeSub?.cancel();
+    _ircNoticeSub = _irc.onNotice.listen((event) {
+      if (!mounted) return;
+      _addSystemMessage(event.channel, event.message);
+    });
+
+    _ircJtvSub?.cancel();
+    _ircJtvSub = _irc.onJtvMessage.listen((event) {
+      if (!mounted) return;
+      _addSystemMessage(event.channel, event.message);
+    });
+
     if (!auth.isConfigured) return;
 
-    _messageSub?.cancel();
-    _messageSub = _eventSub.onMessage.listen(_onMessage);
     _statusSub?.cancel();
     _statusSub = _eventSub.onStatus.listen((status) async {
       if (!mounted) return;
@@ -254,36 +309,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       }
     });
 
-    _deleteSub?.cancel();
-    _deleteSub = _eventSub.onMessageDeleted.listen((event) {
-      if (!mounted) return;
-      final msgs = _channelMessages[event.channel];
-      if (msgs == null) return;
-      String? deletedUser;
-      String? deletedText;
-      for (final msg in msgs) {
-        if (msg.messageId == event.messageId && !msg.isSystem) {
-          msg.deleted = true;
-          deletedUser = msg.username;
-          deletedText = msg.text;
-          break;
-        }
-      }
-      if (deletedUser != null && deletedText != null) {
-        _addSystemMessage(
-          event.channel,
-          'A message from $deletedUser was deleted saying: "$deletedText".',
-        );
-      }
-    });
-
     if (_currentUserLogin == null) {
       try {
         final currentUser = await TwitchApi.getCurrentUser(auth);
         if (currentUser != null) {
           _currentUserLogin = currentUser['login'];
           _currentUserId = currentUser['id'];
-
         }
       } catch (_) {}
     }
@@ -297,27 +328,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       } catch (_) {}
     }
 
-    _ircBanSub?.cancel();
-    _ircBanSub = _irc.onBan.listen((event) {
-      if (!mounted) return;
-      final text = event.isTimeout
-          ? '${event.user} was timed out${event.duration != null ? ' for ${event.duration}s' : ''}.'
-          : '${event.user} was banned.';
-      _addSystemMessage(event.channel, text);
-    });
-
-    _ircNoticeSub?.cancel();
-    _ircNoticeSub = _irc.onNotice.listen((event) {
-      if (!mounted) return;
-      _addSystemMessage(event.channel, event.message);
-    });
-
-    _ircJtvSub?.cancel();
-    _ircJtvSub = _irc.onJtvMessage.listen((event) {
-      if (!mounted) return;
-      _addSystemMessage(event.channel, event.message);
-    });
-
     await _eventSub.connect();
   }
 
@@ -327,55 +337,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (channel == null) return;
 
     final login = _currentUserLogin?.toLowerCase();
-    final isOwn =
-        login != null && !msg.isSystem && msg.username.toLowerCase() == login;
-
-    if (isOwn) {
-      if (msg.color != null && msg.color!.isNotEmpty) {
-        _currentUserColor = msg.color;
-      }
-      bool updated = false;
-      final msgs = _channelMessages[channel];
-      if (msgs != null) {
-        // Skip if Helix already reconciled this messageId.
-        if (msg.messageId != null &&
-            msgs.any((e) => e.messageId == msg.messageId)) {
-          return;
-        }
-        for (final existing in msgs) {
-          if (existing.username == msg.username &&
-              existing.text == msg.text &&
-              existing.messageId == null) {
-            existing.messageId = msg.messageId;
-            if (msg.messageId != null) {
-              _messageKeys.putIfAbsent(
-                '$channel:${msg.messageId}',
-                () => GlobalKey(),
-              );
-            }
-            updated = true;
-            break;
-          }
-        }
-        if (!updated) {
-          setState(() {
-            msgs.insert(0, msg);
-          });
-          return;
-        }
-        if (msg.messageId != null) {
-          for (final existing in msgs) {
-            if (existing.replyToUser == msg.username &&
-                existing.replyToParentId == null) {
-              existing.replyToParentId = msg.messageId;
-              updated = true;
-            }
-          }
-        }
-      }
-      if (updated && mounted) setState(() {});
-      return;
-    }
 
     final isReplyToMe =
         login != null &&
@@ -390,22 +351,50 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             _isMention(msg, login)) ||
         isReplyToMe;
 
+    // Match pending entry by messageId — never by username+text.
+    if (msg.messageId != null &&
+        _pendingByMessageId.containsKey(msg.messageId)) {
+      final tempId = _pendingByMessageId.remove(msg.messageId!)!;
+      _pendingTimers.remove(tempId)?.cancel();
+      final msgs = _channelMessages[channel];
+      if (msgs != null) {
+        for (int i = 0; i < msgs.length; i++) {
+          if (msgs[i].tempId == tempId) {
+            setState(() {
+              msgs[i] = TwitchMessage(
+                username: msg.username,
+                text: msg.text,
+                color: msg.color,
+                timestamp: msg.timestamp,
+                messageId: msg.messageId,
+                channel: msg.channel,
+                replyToParentId: msg.replyToParentId,
+                replyToUser: msg.replyToUser,
+                replyToText: msg.replyToText,
+                userId: msg.userId,
+                emotePositions: msg.emotePositions,
+                isHighlighted: msg.isHighlighted || isMention,
+              );
+            });
+            return;
+          }
+        }
+      }
+      // Pending entry not found (e.g. cleared); fall through to normal insert.
+    }
+
     if (isMention) {
       if (!msg.isHighlighted) _unreadMentions++;
       msg.isHighlighted = true;
-    }
-
-    if (login != null &&
-        msg.username.toLowerCase() == login &&
-        msg.color != null &&
-        msg.color!.isNotEmpty) {
-      _currentUserColor = msg.color;
     }
 
     setState(() {
       _channelMessages.putIfAbsent(channel, () => []);
       _channelMessages[channel]!.insert(0, msg);
       _truncateChannelMessages(channel);
+      if (channel != _selectedChannel && !msg.isHistory) {
+        _channelsWithUnread.add(channel);
+      }
       if (msg.messageId != null) {
         _messageKeys.putIfAbsent(
           '$channel:${msg.messageId}',
@@ -436,6 +425,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         ),
       );
       _truncateChannelMessages(channel);
+      if (channel != _selectedChannel) {
+        _channelsWithUnread.add(channel);
+      }
     });
   }
 
@@ -803,6 +795,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _channelNotifier.value = List.of(_channels);
       _channelMessages.remove(channel);
       _scrollControllers.remove(channel)?.dispose();
+      _channelsWithUnread.remove(channel);
       if (_selectedChannel == channel) {
         _selectedChannel = _channels.isNotEmpty ? _channels.last : null;
       }
@@ -823,6 +816,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final text = _messageController.text.trim();
     final channel = _selectedChannel;
     if (text.isEmpty || channel == null || _showingMentions) return;
+
+    if (!widget.twitchAuth.isConfigured) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Connect an account to chat')),
+      );
+      return;
+    }
 
     _lastSentText = text;
     _messageController.clear();
@@ -852,61 +852,121 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       return;
     }
 
-    final tempId = DateTime.now().microsecondsSinceEpoch.toString();
-
-    // Insert local echo immediately so the render is not gated on the HTTP
-    // round-trip. Reconcile with the real message ID once the API responds.
     if (!mounted) return;
     setState(() {
       _replyToMsg = null;
-      _channelMessages.putIfAbsent(channel, () => []);
-      if (reply?.messageId != null) {
-        _messageKeys.putIfAbsent(
-          '$channel:${reply!.messageId}',
-          () => GlobalKey(),
-        );
-      }
-      _channelMessages[channel]!.insert(
-        0,
-        TwitchMessage(
-          username: _currentUserLogin ?? 'You',
-          text: text,
-          color: (_currentUserColor != null && _currentUserColor!.isNotEmpty)
-              ? _currentUserColor
-              : (_currentUserLogin != null
-                  ? pickColor(_currentUserLogin!)
-                  : null),
-          channel: channel,
-          replyToParentId: reply?.messageId,
-          replyToUser: reply?.username,
-          replyToText: reply?.text,
-          tempId: tempId,
-        ),
-      );
-      _truncateChannelMessages(channel);
     });
     _focusNode.requestFocus();
 
-    // Fire the API call — render already shows the echo.
+    final userLogin = _currentUserLogin;
+    if (userLogin == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Connect an account to chat')),
+        );
+      }
+      return;
+    }
+
+    // Insert pending message immediately.
+    final tempId = 'pending_${++_tempIdCounter}';
+    final pendingMsg = TwitchMessage(
+      username: userLogin,
+      text: text,
+      channel: channel,
+      tempId: tempId,
+      pending: true,
+      timestamp: DateTime.now(),
+      replyToParentId: reply?.messageId,
+      replyToUser: reply?.username,
+      replyToText: reply?.text,
+    );
+    if (!mounted) return;
+    setState(() {
+      _channelMessages.putIfAbsent(channel, () => []);
+      _channelMessages[channel]!.insert(0, pendingMsg);
+    });
+
     if (_currentUserId != null && auth.isConfigured) {
       final broadcasterId = _channelUserIds[channel];
       if (broadcasterId != null) {
-        final messageId = await TwitchApi.sendChatMessage(
-          auth,
-          broadcasterId: broadcasterId,
-          senderId: _currentUserId!,
-          message: text,
-          replyParentMessageId: reply?.messageId,
-        );
-        _reconcileLocalEcho(channel, tempId, messageId);
-      } else {
-        _irc.sendMessage(channel, text,
-            replyParentMessageId: reply?.messageId);
+        try {
+          final messageId = await TwitchApi.sendChatMessage(
+            auth,
+            broadcasterId: broadcasterId,
+            senderId: _currentUserId!,
+            message: text,
+            replyParentMessageId: reply?.messageId,
+          );
+          if (!mounted) return;
+          if (messageId != null) {
+            _pendingByMessageId[messageId] = tempId;
+            _pendingTimers[tempId] = Timer(
+              const Duration(seconds: 8),
+              () => _markUnconfirmed(tempId),
+            );
+          } else {
+            _markFailed(
+              tempId,
+              TwitchApi.lastError ?? 'unknown error',
+            );
+          }
+        } catch (e) {
+          if (!mounted) return;
+          _markFailed(tempId, e.toString());
+        }
+        return;
       }
-    } else {
-      _irc.sendMessage(channel, text,
-          replyParentMessageId: reply?.messageId);
     }
+
+    // IRC fallback — no messageId to match, can't confirm. Transition to
+    // unconfirmed after a short delay so the user sees their message.
+    //
+    // BUG: This creates a pending entry with no resolution path. EventSub
+    // cannot match it (no _pendingByMessageId mapping), so it stays
+    // unconfirmed permanently. This is hit when auth is configured but
+    // _channelUserIds[channel] is null (e.g. _subscribeChannel failed
+    // silently). Fix: queue the message until broadcasterId resolves, or
+    // skip pending creation when Helix path isn't available.
+    _irc.sendMessage(channel, text,
+        replyParentMessageId: reply?.messageId);
+    _pendingTimers[tempId] = Timer(
+      const Duration(seconds: 3),
+      () => _markUnconfirmed(tempId),
+    );
+  }
+
+  void _markFailed(String tempId, String error) {
+    for (final msgs in _channelMessages.values) {
+      for (final msg in msgs) {
+        if (msg.tempId == tempId && msg.pending) {
+          msg.pending = false;
+          msg.failed = true;
+          if (mounted) setState(() {});
+          return;
+        }
+      }
+    }
+  }
+
+  void _markUnconfirmed(String tempId) {
+    _pendingTimers.remove(tempId);
+    _pendingByMessageId.removeWhere((_, v) => v == tempId);
+    for (final msgs in _channelMessages.values) {
+      for (final msg in msgs) {
+        if (msg.tempId == tempId && msg.pending) {
+          msg.pending = false;
+          msg.unconfirmed = true;
+          if (mounted) setState(() {});
+          return;
+        }
+      }
+    }
+  }
+
+  void _retrySend(TwitchMessage failedMsg) {
+    if (failedMsg.channel == null) return;
+    _doSendMessage(failedMsg.text, failedMsg.channel!);
   }
 
   void _onSendLongPress() {
@@ -917,29 +977,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       );
       _focusNode.requestFocus();
     }
-  }
-
-  void _reconcileLocalEcho(
-      String channel, String tempId, String? messageId) {
-    if (!mounted) return;
-    setState(() {
-      final msgs = _channelMessages[channel];
-      if (msgs == null) return;
-      for (final msg in msgs) {
-        if (msg.tempId == tempId) {
-          if (messageId != null) {
-            msg.messageId = messageId;
-            _messageKeys.putIfAbsent(
-              '$channel:$messageId',
-              () => GlobalKey(),
-            );
-          } else {
-            msg.sendFailed = TwitchApi.lastError ?? 'Unknown error';
-          }
-          break;
-        }
-      }
-    });
   }
 
   /// Handles slash commands by routing to the appropriate Twitch API endpoint.
@@ -1352,6 +1389,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           children: [TextSpan(text: msg.text)],
                           timestampFontSize: 13,
                           bodyFontSize: 13,
+                          pending: msg.pending,
+                          failed: msg.failed,
+                          unconfirmed: msg.unconfirmed,
+                          bodyColor: msg.bodyColor,
+                          onRetry: msg.failed ? () => _retrySend(msg) : null,
                         );
                       }
 
@@ -1359,6 +1401,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         timestamp: ts,
                         deleted: msg.deleted,
                         isHistory: msg.isHistory,
+                        pending: msg.pending,
+                        failed: msg.failed,
+                        unconfirmed: msg.unconfirmed,
+                        bodyColor: msg.bodyColor,
+                        onRetry: msg.failed ? () => _retrySend(msg) : null,
                         children: [
                           if (msg.isAction) ...[
                             TextSpan(
@@ -1494,6 +1541,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           children: [TextSpan(text: msg.text)],
                           timestampFontSize: 13,
                           bodyFontSize: 13,
+                          pending: msg.pending,
+                          failed: msg.failed,
+                          unconfirmed: msg.unconfirmed,
+                          bodyColor: msg.bodyColor,
+                          onRetry: msg.failed ? () => _retrySend(msg) : null,
                         );
                       }
 
@@ -1501,6 +1553,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         timestamp: ts,
                         deleted: msg.deleted,
                         isHistory: msg.isHistory,
+                        pending: msg.pending,
+                        failed: msg.failed,
+                        unconfirmed: msg.unconfirmed,
+                        bodyColor: msg.bodyColor,
+                        onRetry: msg.failed ? () => _retrySend(msg) : null,
                         children: [
                           if (msg.isAction) ...[
                             TextSpan(
@@ -1614,6 +1671,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           )
           .whenComplete(() {
             _programmaticPageChange = false;
+            _channelsWithUnread.remove(channel);
           });
     }
     _requestScrollToChannel(index);
@@ -1735,6 +1793,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       if (mounted) setState(() {});
                       _connect();
                     },
+                    eventSubMessageStream: _eventSub.onMessage,
                   ),
                 ],
               ),
@@ -1805,12 +1864,22 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                                         fontSize: 14,
                                                         fontWeight: selected
                                                             ? FontWeight.w600
-                                                            : FontWeight.normal,
+                                                            : _channelsWithUnread
+                                                                    .contains(
+                                                                    channel,
+                                                                  )
+                                                                ? FontWeight.w600
+                                                                : FontWeight.normal,
                                                         color: selected
                                                             ? theme
                                                                   .colorScheme
                                                                   .primary
-                                                            : null,
+                                                            : _channelsWithUnread
+                                                                    .contains(
+                                                                    channel,
+                                                                  )
+                                                                ? Colors.white
+                                                                : null,
                                                       ),
                                                     ),
                                                   ),
@@ -1876,6 +1945,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                         _selectedChannel = _channels[i];
                                         _openThreadRoot = null;
                                         _showingMentions = false;
+                                        _channelsWithUnread.remove(
+                                          _channels[i],
+                                        );
                                       });
                                       _requestScrollToChannel(i);
                                     },
@@ -1942,8 +2014,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   onSendLongPress: _onSendLongPress,
                   replyToMsg: _replyToMsg,
                   onCancelReply: () => setState(() => _replyToMsg = null),
-                  enabled: !_showingMentions,
-                  hintText: _openThreadRoot != null
+                  enabled: !_showingMentions && widget.twitchAuth.isConfigured,
+                  hintText: !widget.twitchAuth.isConfigured
+                      ? 'Connect an account to chat'
+                      : _openThreadRoot != null
                       ? 'Reply to thread...'
                       : _showingMentions
                       ? 'Type a message...'
@@ -2057,6 +2131,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               timestamp: ts,
               isHistory: msg.isHistory,
               children: parseTextWithLinks(msg.text),
+              bodyColor: msg.bodyColor,
               useTextDecorationNone: true,
             );
           } else {
@@ -2064,6 +2139,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               timestamp: ts,
               deleted: msg.deleted,
               isHistory: msg.isHistory,
+              pending: msg.pending,
+              failed: msg.failed,
+              unconfirmed: msg.unconfirmed,
+              bodyColor: msg.bodyColor,
+              onRetry: msg.failed ? () => _retrySend(msg) : null,
               children: [
                 TextSpan(
                   text: msg.isAction ? '${msg.username} ' : '${msg.username}: ',

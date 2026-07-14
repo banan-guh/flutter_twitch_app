@@ -1,3 +1,5 @@
+import 'package:flutter/material.dart';
+
 class EmotePosition {
   final String emoteId;
   final int startIndex;
@@ -29,9 +31,11 @@ class TwitchMessage {
   bool isHighlighted;
   String? userId;
   final List<EmotePosition>? emotePositions;
-  final String? tempId;
-  String? sendFailed;
-
+  bool pending;
+  bool failed;
+  bool unconfirmed;
+  String? tempId;
+  Color get bodyColor => isSystem ? Colors.grey : Colors.white.withValues(alpha: 0.87);
   TwitchMessage({
     required this.username,
     required this.text,
@@ -49,7 +53,9 @@ class TwitchMessage {
     this.isHighlighted = false,
     this.userId,
     this.emotePositions,
+    this.pending = false,
+    this.failed = false,
+    this.unconfirmed = false,
     this.tempId,
-    this.sendFailed,
   }) : timestamp = timestamp ?? DateTime.now();
 }

@@ -170,9 +170,17 @@ void main() {
     expect(find.text('Join'), findsOneWidget);
   });
 
-  testWidgets('Can send local messages after adding channel without credentials',
+  testWidgets('Can send messages after adding channel without credentials',
       (WidgetTester tester) async {
-    await tester.pumpWidget(const TwitchChatApp());
+    final fakeEventSub = _TestEventSubService();
+    final fakeIrc = _FakeIrcService();
+    final fakeRecent = _FakeRecentMessagesService();
+
+    await tester.pumpWidget(TwitchChatApp(
+      eventSubService: fakeEventSub,
+      ircService: fakeIrc,
+      recentMessagesService: fakeRecent,
+    ));
     await tester.pump();
 
     await tester.tap(find.byIcon(Icons.add));
@@ -182,11 +190,22 @@ void main() {
     await tester.tap(find.text('Join'));
     await tester.pump();
 
-    expect(find.text('Type a message...'), findsOneWidget);
+    expect(find.text('Connect an account to chat'), findsOneWidget);
 
+    // Trying to send does nothing (input is disabled without credentials).
     await tester.enterText(
         find.byKey(const Key('message_input')), 'hello chat');
     await tester.tap(find.byIcon(Icons.send));
+    await tester.pump();
+    expect(find.textContaining('hello chat'), findsNothing);
+
+    // EventSub messages still appear in view-only mode.
+    fakeEventSub.emitMessage(TwitchMessage(
+      username: 'xqc',
+      text: 'hello chat',
+      channel: 'xqc',
+      messageId: 'm1',
+    ));
     await tester.pump();
 
     expect(find.textContaining('hello chat'), findsOneWidget);
@@ -362,17 +381,22 @@ void main() {
     await tester.tap(find.text('Join'));
     await tester.pumpAndSettle();
 
-    await tester.enterText(
-        find.byKey(const Key('message_input')), '   ');
-    await tester.tap(find.byIcon(Icons.send));
-    await tester.pump();
-
-    expect(find.text('   '), findsOneWidget);
+    // Input is disabled without credentials; send does nothing.
+    expect(find.text('Connect an account to chat'), findsOneWidget);
+    expect(find.text('   '), findsNothing);
   });
 
-  testWidgets('Local message timestamp shows HH:MM format',
+  testWidgets('Message timestamp shows HH:MM format',
       (WidgetTester tester) async {
-    await tester.pumpWidget(const TwitchChatApp());
+    final fakeEventSub = _TestEventSubService();
+    final fakeIrc = _FakeIrcService();
+    final fakeRecent = _FakeRecentMessagesService();
+
+    await tester.pumpWidget(TwitchChatApp(
+      eventSubService: fakeEventSub,
+      ircService: fakeIrc,
+      recentMessagesService: fakeRecent,
+    ));
     await tester.pump();
 
     await tester.tap(find.byIcon(Icons.add));
@@ -384,6 +408,14 @@ void main() {
     await tester.enterText(
         find.byKey(const Key('message_input')), 'hello');
     await tester.tap(find.byIcon(Icons.send));
+    await tester.pump();
+
+    fakeEventSub.emitMessage(TwitchMessage(
+      username: 'xqc',
+      text: 'hello',
+      channel: 'xqc',
+      messageId: 'm1',
+    ));
     await tester.pump();
 
     final timeText = find.textContaining(RegExp(r'^\d{2}:\d{2}$'));
@@ -642,28 +674,39 @@ void main() {
     });
 
     testWidgets(
-        'local sent reply to history parent opens thread via reply indicator',
+        'sent reply to history parent opens thread via reply indicator',
         (WidgetTester tester) async {
       const channel = 'testchannel';
       final parent = TwitchMessage(
         username: 'alice', text: 'original msg', messageId: 'p1',
         timestamp: now.subtract(const Duration(minutes: 5)), channel: channel,
       );
+      final eventSub = _TestEventSubService();
       await joinChannel(
-          tester, channelName: channel, history: [parent]);
+          tester, channelName: channel, history: [parent], eventSub: eventSub);
 
       await tester.longPress(find.textContaining('alice: original msg'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Reply to message'));
       await tester.pumpAndSettle();
 
-      await tester.enterText(
-          find.byKey(const Key('message_input')), 'my reply');
-      await tester.tap(find.byIcon(Icons.send));
+      // Send is disabled without credentials; emit a reply via EventSub.
+      // Verify the history message is rendered first.
+      expect(find.textContaining('alice: original msg'), findsOneWidget);
+
+      eventSub.emitMessage(TwitchMessage(
+        username: 'bob',
+        text: 'my reply',
+        channel: channel,
+        messageId: 'sent1',
+        replyToParentId: 'p1',
+        replyToUser: 'alice',
+        replyToText: 'original msg',
+      ));
       await tester.pump();
       await tester.pump();
 
-      expect(find.textContaining('my reply'), findsAtLeast(1));
+      expect(find.textContaining('my reply'), findsOneWidget);
 
       await tester.tap(find.textContaining('replying to alice: original msg'));
       await tester.pumpAndSettle();

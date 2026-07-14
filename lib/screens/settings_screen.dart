@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../models/twitch_message.dart';
 import '../services/twitch_auth.dart';
 import '../services/twitch_oauth.dart';
+import 'benchmark_screen.dart';
 
 typedef OAuthStarter =
     Future<String?> Function({required void Function(String authUrl) onReady});
@@ -15,6 +18,7 @@ class SettingsScreen extends StatefulWidget {
   final ValueChanged<String>? onLeaveChannel;
   final ValueChanged<String>? onAddChannel;
   final OAuthStarter? oAuthStarter;
+  final Stream<TwitchMessage>? eventSubMessageStream;
 
   const SettingsScreen({
     super.key,
@@ -24,6 +28,7 @@ class SettingsScreen extends StatefulWidget {
     this.onLeaveChannel,
     this.onAddChannel,
     this.oAuthStarter,
+    this.eventSubMessageStream,
   });
 
   @override
@@ -279,6 +284,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Text('Twitch Login', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 16),
           _buildBody(),
+          const Divider(height: 32),
+          Text('Debug', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => BenchmarkScreen(
+                  twitchAuth: widget.twitchAuth,
+                  availableChannels: widget.channelNotifier?.value ?? [],
+                  eventSubMessages: widget.eventSubMessageStream,
+                ),
+              ),
+            ),
+            icon: const Icon(Icons.speed),
+            label: const Text('Message Latency Benchmark'),
+          ),
         ],
       ),
     );
