@@ -1,9 +1,24 @@
+class EmotePosition {
+  final String emoteId;
+  final int startIndex;
+  final int endIndex;
+  final String emoteCode;
+
+  const EmotePosition({
+    required this.emoteId,
+    required this.startIndex,
+    required this.endIndex,
+    required this.emoteCode,
+  });
+}
+
 class TwitchMessage {
   final DateTime timestamp;
   final String username;
   final String text;
   final String? color;
   final bool isSystem;
+  final bool isAction;
   String? messageId;
   final String? channel;
   bool deleted;
@@ -13,6 +28,7 @@ class TwitchMessage {
   final String? replyToText;
   bool isHighlighted;
   String? userId;
+  final List<EmotePosition>? emotePositions;
 
   TwitchMessage({
     required this.username,
@@ -20,6 +36,7 @@ class TwitchMessage {
     this.color,
     DateTime? timestamp,
     this.isSystem = false,
+    this.isAction = false,
     this.messageId,
     this.channel,
     this.deleted = false,
@@ -29,5 +46,6 @@ class TwitchMessage {
     this.replyToText,
     this.isHighlighted = false,
     this.userId,
+    this.emotePositions,
   }) : timestamp = timestamp ?? DateTime.now();
 }

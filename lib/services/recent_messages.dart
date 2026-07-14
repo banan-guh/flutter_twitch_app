@@ -5,14 +5,19 @@ import '../models/twitch_message.dart';
 import '../color_utils.dart';
 
 class RecentMessagesService {
-  static const _baseUrl = 'https://recent-messages.robotty.de/api/v2/recent-messages';
+  static const _baseUrl =
+      'https://recent-messages.robotty.de/api/v2/recent-messages';
 
   Future<List<TwitchMessage>> fetchRecent(String channel) async {
-    final uri = Uri.parse('$_baseUrl/${Uri.encodeComponent(channel.toLowerCase())}?limit=100');
+    final uri = Uri.parse(
+      '$_baseUrl/${Uri.encodeComponent(channel.toLowerCase())}?limit=100',
+    );
     final res = await http.get(uri).timeout(const Duration(seconds: 10));
 
     if (res.statusCode != 200) {
-      throw Exception('error ${res.statusCode}: ${res.reasonPhrase ?? "unknown"}');
+      throw Exception(
+        'error ${res.statusCode}: ${res.reasonPhrase ?? "unknown"}',
+      );
     }
 
     final body = jsonDecode(res.body) as Map<String, dynamic>;
@@ -68,6 +73,12 @@ class RecentMessagesService {
     String? replyUser;
     String? replyText;
     String displayText = text;
+    bool isAction = false;
+    // IRC ACTION messages are wrapped in \x01ACTION ... \x01
+    if (displayText.startsWith('\x01ACTION ') && displayText.endsWith('\x01')) {
+      isAction = true;
+      displayText = displayText.substring(8, displayText.length - 1);
+    }
     if (tags.containsKey('reply-parent-msg-id')) {
       replyParentId = tags['reply-parent-msg-id'];
       replyUser = tags['reply-parent-display-name'];
@@ -76,10 +87,42 @@ class RecentMessagesService {
           : null;
       if (replyUser != null) {
         final prefix = '@$replyUser ';
-        if (displayText.startsWith(RegExp('^${RegExp.escape(prefix)}', caseSensitive: false))) {
+        if (displayText.startsWith(
+          RegExp('^${RegExp.escape(prefix)}', caseSensitive: false),
+        )) {
           displayText = displayText.substring(prefix.length);
         }
       }
+    }
+
+    List<EmotePosition>? emotePositions;
+    final emotesTag = tags['emotes'];
+    if (emotesTag != null && emotesTag.isNotEmpty) {
+      emotePositions = [];
+      for (final emoteEntry in emotesTag.split('/')) {
+        final colonIdx = emoteEntry.indexOf(':');
+        if (colonIdx == -1) continue;
+        final emoteId = emoteEntry.substring(0, colonIdx);
+        final positionsStr = emoteEntry.substring(colonIdx + 1);
+        for (final posStr in positionsStr.split(',')) {
+          final dashIdx = posStr.indexOf('-');
+          if (dashIdx == -1) continue;
+          final start = int.tryParse(posStr.substring(0, dashIdx));
+          final end = int.tryParse(posStr.substring(dashIdx + 1));
+          if (start == null || end == null) continue;
+          // end is exclusive, but IRC tag uses inclusive end
+          final emoteCode = displayText.substring(start, end + 1);
+          emotePositions.add(
+            EmotePosition(
+              emoteId: emoteId,
+              startIndex: start,
+              endIndex: end + 1,
+              emoteCode: emoteCode,
+            ),
+          );
+        }
+      }
+      if (emotePositions.isEmpty) emotePositions = null;
     }
 
     if (username.isEmpty && displayText.isEmpty) return null;
@@ -100,9 +143,11 @@ class RecentMessagesService {
       messageId: messageId,
       channel: channel,
       isHistory: true,
+      isAction: isAction,
       replyToParentId: replyParentId,
       replyToUser: replyUser,
       replyToText: replyText,
+      emotePositions: emotePositions,
     );
   }
 

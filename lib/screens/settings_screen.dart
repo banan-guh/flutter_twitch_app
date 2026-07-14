@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/twitch_auth.dart';
 import '../services/twitch_oauth.dart';
 
-typedef OAuthStarter = Future<String?> Function({
-  required void Function(String authUrl) onReady,
-});
+typedef OAuthStarter =
+    Future<String?> Function({required void Function(String authUrl) onReady});
 
 class SettingsScreen extends StatefulWidget {
   final TwitchAuth twitchAuth;
@@ -36,12 +36,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
   _AuthState _authState = _AuthState.idle;
   String? _authError;
   String? _authUrl;
+  int _maxMessagesPerChannel = 200;
+  double _uiScale = 1.0;
 
   @override
   void initState() {
     super.initState();
     if (widget.twitchAuth.isConfigured) _authState = _AuthState.success;
     widget.channelNotifier?.addListener(_onChannelsChanged);
+    _loadMaxMessages();
+    _loadUiScale();
+  }
+
+  Future<void> _loadMaxMessages() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() {
+        _maxMessagesPerChannel =
+            prefs.getInt('max_messages_per_channel') ?? 200;
+      });
+    }
+  }
+
+  Future<void> _loadUiScale() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() {
+        _uiScale = prefs.getDouble('ui_scale') ?? 1.0;
+      });
+    }
   }
 
   @override
@@ -83,22 +106,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } else if (_authState != _AuthState.needsSetup) {
       setState(() {
         _authState = _AuthState.error;
-        _authError = _authError ?? TwitchOAuth.lastError ?? 'Authorization failed or timed out.';
+        _authError =
+            _authError ??
+            TwitchOAuth.lastError ??
+            'Authorization failed or timed out.';
       });
     }
   }
 
   Future<void> _tryOpenUrl(String url) async {
     try {
-      final opened = await launchUrl(Uri.parse(url),
-          mode: LaunchMode.externalApplication);
+      final opened = await launchUrl(
+        Uri.parse(url),
+        mode: LaunchMode.externalApplication,
+      );
       if (!opened) {
         setState(
-            () => _authError = 'Could not open browser. Use the button below.');
+          () => _authError = 'Could not open browser. Use the button below.',
+        );
       }
     } catch (_) {
       setState(
-          () => _authError = 'Could not open browser. Use the button below.');
+        () => _authError = 'Could not open browser. Use the button below.',
+      );
     }
   }
 
@@ -165,8 +195,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             if (channels.isEmpty)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 8),
-                child: Text('No channels joined',
-                    style: TextStyle(color: Colors.grey)),
+                child: Text(
+                  'No channels joined',
+                  style: TextStyle(color: Colors.grey),
+                ),
               )
             else
               ...channels.map(
@@ -193,14 +225,58 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: const Text('Dark mode'),
             value: isDark,
             onChanged: (dark) {
-              widget.onThemeChanged(
-                dark ? ThemeMode.dark : ThemeMode.light,
-              );
+              widget.onThemeChanged(dark ? ThemeMode.dark : ThemeMode.light);
             },
           ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  'Max messages per channel: $_maxMessagesPerChannel',
+                ),
+              ),
+              Slider(
+                value: _maxMessagesPerChannel.toDouble(),
+                min: 100,
+                max: 1000,
+                divisions: 9,
+                label: '$_maxMessagesPerChannel',
+                onChanged: (value) async {
+                  final v = value.toInt();
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.setInt('max_messages_per_channel', v);
+                  if (mounted) setState(() => _maxMessagesPerChannel = v);
+                },
+              ),
+            ],
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  'UI scale: ${_uiScale.toStringAsFixed(1)}x',
+                ),
+              ),
+              Slider(
+                value: _uiScale,
+                min: 0.5,
+                max: 2.0,
+                divisions: 15,
+                label: '${_uiScale.toStringAsFixed(1)}x',
+                onChanged: (value) async {
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.setDouble('ui_scale', value);
+                  if (mounted) setState(() => _uiScale = value);
+                },
+              ),
+            ],
+          ),
           const Divider(height: 32),
-          Text('Twitch Login',
-              style: Theme.of(context).textTheme.titleMedium),
+          Text('Twitch Login', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 16),
           _buildBody(),
         ],
@@ -319,8 +395,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 16),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Text(_authError ?? 'Unknown error',
-                    textAlign: TextAlign.center),
+                child: Text(
+                  _authError ?? 'Unknown error',
+                  textAlign: TextAlign.center,
+                ),
               ),
               const SizedBox(height: 24),
               if (_authUrl != null) ...[

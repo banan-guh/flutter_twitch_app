@@ -43,11 +43,12 @@ class TwitchOAuth {
     final redirectUri = 'http://localhost:$_localPort/';
 
     final state = _randomState();
-    final authUrl = '$_authorizeUrl'
+    final authUrl =
+        '$_authorizeUrl'
         '?client_id=$clientId'
         '&redirect_uri=${Uri.encodeQueryComponent(redirectUri)}'
         '&response_type=token'
-        '&scope=chat:read%20chat:edit%20user:read:chat'
+        '&scope=chat:read%20chat:edit%20user:read:chat%20user:write:chat%20user:manage:chat_color%20moderator:manage:banned_users%20moderator:manage:chat_messages%20moderator:manage:announcements%20moderator:manage:shoutouts'
         '&state=$state'
         '&force_verify=true';
 
@@ -74,7 +75,10 @@ class TwitchOAuth {
     return base64Url.encode(bytes).replaceAll('=', '');
   }
 
-  static Future<String?> _listen(HttpServer server, String expectedState) async {
+  static Future<String?> _listen(
+    HttpServer server,
+    String expectedState,
+  ) async {
     await for (final request in server) {
       if (request.uri.path == '/token') {
         final token = request.uri.queryParameters['access_token'];
@@ -96,7 +100,8 @@ class TwitchOAuth {
       if (error != null) {
         request.response.headers.contentType = ContentType.html;
         request.response.write(
-            '<h2>Authorization denied.</h2><p>$error</p><p>You can close this tab.</p>');
+          '<h2>Authorization denied.</h2><p>$error</p><p>You can close this tab.</p>',
+        );
         await request.response.close();
         lastError = 'Twitch returned: $error';
         return null;
@@ -110,7 +115,10 @@ class TwitchOAuth {
   }
 
   static Future<void> _respond(
-      HttpRequest request, int status, String body) async {
+    HttpRequest request,
+    int status,
+    String body,
+  ) async {
     request.response.statusCode = status;
     request.response.write(body);
     await request.response.close();

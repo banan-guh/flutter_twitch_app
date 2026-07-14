@@ -56,7 +56,10 @@ Color ensureContrast(Color color, Color background) {
   final saturation = hsl.saturation;
   for (double l = hsl.lightness; l >= 0; l -= 0.01) {
     final test = HSLColor.fromAHSL(
-      1, hue, max(saturation, l > 0.5 ? saturation : saturation * 0.5), l,
+      1,
+      hue,
+      max(saturation, l > 0.5 ? saturation : saturation * 0.5),
+      l,
     ).toColor();
     if (contrast(test, background) >= 4.5) return test;
   }

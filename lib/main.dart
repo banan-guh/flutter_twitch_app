@@ -34,11 +34,14 @@ class _TwitchChatAppState extends State<TwitchChatApp> {
   @override
   void initState() {
     super.initState();
-    _twitchAuth.load().then((_) {
-      if (mounted) setState(() => _loaded = true);
-    }).catchError((_) {
-      if (mounted) setState(() => _loaded = true);
-    });
+    _twitchAuth
+        .load()
+        .then((_) {
+          if (mounted) setState(() => _loaded = true);
+        })
+        .catchError((_) {
+          if (mounted) setState(() => _loaded = true);
+        });
   }
 
   void _setThemeMode(ThemeMode mode) {
@@ -53,9 +56,7 @@ class _TwitchChatAppState extends State<TwitchChatApp> {
           colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
           useMaterial3: true,
         ),
-        home: const Scaffold(
-          body: Center(child: CircularProgressIndicator()),
-        ),
+        home: const Scaffold(body: Center(child: CircularProgressIndicator())),
       );
     }
 

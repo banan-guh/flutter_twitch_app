@@ -48,13 +48,13 @@ class TwitchApi {
       _setError('No user associated with token');
       return null;
     }
-    return {
-      'id': list[0]['id'] as String,
-      'login': list[0]['login'] as String,
-    };
+    return {'id': list[0]['id'] as String, 'login': list[0]['login'] as String};
   }
 
-  static Future<String?> getUserChatColor(TwitchAuth auth, String userId) async {
+  static Future<String?> getUserChatColor(
+    TwitchAuth auth,
+    String userId,
+  ) async {
     _lastError = null;
     final uri = Uri.parse('$_base/chat/color?user_id=$userId');
     final res = await _client.get(uri, headers: _headers(auth));
@@ -83,10 +83,7 @@ class TwitchApi {
         'broadcaster_user_id': broadcasterUserId,
         'user_id': userId,
       },
-      'transport': {
-        'method': 'websocket',
-        'session_id': sessionId,
-      },
+      'transport': {'method': 'websocket', 'session_id': sessionId},
     });
     final res = await _client.post(uri, headers: _headers(auth), body: body);
     if (res.statusCode == 409) return true;
@@ -112,10 +109,7 @@ class TwitchApi {
         'broadcaster_user_id': broadcasterUserId,
         'user_id': userId,
       },
-      'transport': {
-        'method': 'websocket',
-        'session_id': sessionId,
-      },
+      'transport': {'method': 'websocket', 'session_id': sessionId},
     });
     final res = await _client.post(uri, headers: _headers(auth), body: body);
     if (res.statusCode == 409) return true;
@@ -128,9 +122,15 @@ class TwitchApi {
 
   /// Returns chat settings for a broadcaster.
   /// Keys: slow_mode, follower_mode, subscriber_mode, emote_mode, etc.
-  static Future<Map<String, dynamic>?> getChatSettings(TwitchAuth auth, String broadcasterId, String moderatorId) async {
+  static Future<Map<String, dynamic>?> getChatSettings(
+    TwitchAuth auth,
+    String broadcasterId,
+    String moderatorId,
+  ) async {
     _lastError = null;
-    final uri = Uri.parse('$_base/chat/settings?broadcaster_id=$broadcasterId&moderator_id=$moderatorId');
+    final uri = Uri.parse(
+      '$_base/chat/settings?broadcaster_id=$broadcasterId&moderator_id=$moderatorId',
+    );
     final res = await _client.get(uri, headers: _headers(auth));
     if (res.statusCode != 200) {
       _setError('getChatSettings', res);
@@ -144,7 +144,10 @@ class TwitchApi {
 
   /// Returns stream info for a broadcaster.
   /// Keys: type, viewer_count, started_at (null if offline).
-  static Future<Map<String, dynamic>?> getStreamInfo(TwitchAuth auth, String broadcasterId) async {
+  static Future<Map<String, dynamic>?> getStreamInfo(
+    TwitchAuth auth,
+    String broadcasterId,
+  ) async {
     _lastError = null;
     final uri = Uri.parse('$_base/streams?user_id=$broadcasterId');
     final res = await _client.get(uri, headers: _headers(auth));
@@ -159,14 +162,17 @@ class TwitchApi {
   }
 
   static Map<String, String> _headers(TwitchAuth auth) => {
-        'Client-ID': TwitchConfig.clientId,
-        'Authorization': 'Bearer ${auth.accessToken ?? ''}',
-        'Content-Type': 'application/json',
-      };
+    'Client-ID': TwitchConfig.clientId,
+    'Authorization': 'Bearer ${auth.accessToken ?? ''}',
+    'Content-Type': 'application/json',
+  };
 
   /// Returns full user profile for a given login.
   /// Keys: id, login, display_name, description, profile_image_url, created_at, broadcaster_type.
-  static Future<Map<String, dynamic>?> getUserProfile(TwitchAuth auth, String login) async {
+  static Future<Map<String, dynamic>?> getUserProfile(
+    TwitchAuth auth,
+    String login,
+  ) async {
     _lastError = null;
     final uri = Uri.parse('$_base/users?login=$login');
     final res = await _client.get(uri, headers: _headers(auth));
@@ -194,7 +200,12 @@ class TwitchApi {
   }
 
   /// Reports a user. Requires moderation:read scope.
-  static Future<bool> reportUser(TwitchAuth auth, {required String userId, required String broadcasterId, String reason = ''}) async {
+  static Future<bool> reportUser(
+    TwitchAuth auth, {
+    required String userId,
+    required String broadcasterId,
+    String reason = '',
+  }) async {
     _lastError = null;
     final uri = Uri.parse('$_base/moderation/reports');
     final body = jsonEncode({
@@ -207,6 +218,166 @@ class TwitchApi {
     final res = await _client.post(uri, headers: _headers(auth), body: body);
     if (res.statusCode == 204) return true;
     _setError('reportUser', res);
+    return false;
+  }
+
+  /// Sends a chat message via the Helix API.
+  /// Returns the message ID if sent, null on failure.
+  static Future<String?> sendChatMessage(
+    TwitchAuth auth, {
+    required String broadcasterId,
+    required String senderId,
+    required String message,
+    String? replyParentMessageId,
+  }) async {
+    _lastError = null;
+    final uri = Uri.parse('$_base/chat/messages');
+    final body = <String, dynamic>{
+      'broadcaster_id': broadcasterId,
+      'sender_id': senderId,
+      'message': message,
+    };
+    if (replyParentMessageId != null) {
+      body['reply_parent_message_id'] = replyParentMessageId;
+    }
+    final res = await _client.post(
+      uri,
+      headers: _headers(auth),
+      body: jsonEncode(body),
+    );
+    if (res.statusCode != 200) {
+      _setError('sendChatMessage', res);
+      return null;
+    }
+    final data = jsonDecode(res.body) as Map;
+    final list = data['data'] as List;
+    if (list.isEmpty) return null;
+    final item = list[0] as Map<String, dynamic>;
+    if (item['is_sent'] != true) {
+      final dropReason = item['drop_reason'] as Map<String, dynamic>?;
+      _setError(
+        'sendChatMessage dropped: ${dropReason?['message'] ?? "unknown"}',
+      );
+      return null;
+    }
+    return item['message_id'] as String;
+  }
+
+  /// Updates the user's chat color.
+  /// Named colors: blue, blue_violet, cadet_blue, chocolate, coral,
+  /// dodger_blue, firebrick, golden_rod, green, hot_pink, orange_red,
+  /// red, sea_green, spring_green, yellow_green.
+  /// Turbo/Prime users may also use hex codes like #9146FF.
+  static Future<bool> updateUserChatColor(
+    TwitchAuth auth, {
+    required String userId,
+    required String color,
+  }) async {
+    _lastError = null;
+    final uri = Uri.parse(
+      '$_base/chat/color?user_id=$userId&color=${Uri.encodeComponent(color)}',
+    );
+    final res = await _client.put(uri, headers: _headers(auth));
+    if (res.statusCode == 204) return true;
+    _setError('updateUserChatColor', res);
+    return false;
+  }
+
+  /// Bans a user from a broadcaster's chat. Returns true on success.
+  static Future<bool> banUser(
+    TwitchAuth auth, {
+    required String broadcasterId,
+    required String moderatorId,
+    required String userId,
+    int? duration,
+    String? reason,
+  }) async {
+    _lastError = null;
+    final uri = Uri.parse(
+      '$_base/moderation/bans?broadcaster_id=$broadcasterId&moderator_id=$moderatorId',
+    );
+    final data = <String, String>{'user_id': userId};
+    if (duration != null) data['duration'] = duration.toString();
+    if (reason != null && reason.isNotEmpty) data['reason'] = reason;
+    final body = jsonEncode({'data': data});
+    final res = await _client.post(uri, headers: _headers(auth), body: body);
+    if (res.statusCode == 200) return true;
+    _setError('banUser', res);
+    return false;
+  }
+
+  /// Removes a ban or timeout on a user.
+  static Future<bool> unbanUser(
+    TwitchAuth auth, {
+    required String broadcasterId,
+    required String moderatorId,
+    required String userId,
+  }) async {
+    _lastError = null;
+    final uri = Uri.parse(
+      '$_base/moderation/bans?broadcaster_id=$broadcasterId&moderator_id=$moderatorId&user_id=$userId',
+    );
+    final res = await _client.delete(uri, headers: _headers(auth));
+    if (res.statusCode == 204) return true;
+    _setError('unbanUser', res);
+    return false;
+  }
+
+  /// Deletes a single chat message or all chat messages.
+  /// If [messageId] is provided, deletes that message; otherwise clears all.
+  static Future<bool> deleteChatMessage(
+    TwitchAuth auth, {
+    required String broadcasterId,
+    required String moderatorId,
+    String? messageId,
+  }) async {
+    _lastError = null;
+    var url =
+        '$_base/moderation/chat?broadcaster_id=$broadcasterId&moderator_id=$moderatorId';
+    if (messageId != null) url += '&message_id=$messageId';
+    final uri = Uri.parse(url);
+    final res = await _client.delete(uri, headers: _headers(auth));
+    if (res.statusCode == 204) return true;
+    _setError('deleteChatMessage', res);
+    return false;
+  }
+
+  /// Sends an announcement to a broadcaster's chat room.
+  static Future<bool> sendChatAnnouncement(
+    TwitchAuth auth, {
+    required String broadcasterId,
+    required String moderatorId,
+    required String message,
+    String color = 'primary',
+  }) async {
+    _lastError = null;
+    final uri = Uri.parse(
+      '$_base/chat/announcements?broadcaster_id=$broadcasterId&moderator_id=$moderatorId',
+    );
+    final body = jsonEncode({'message': message, 'color': color});
+    final res = await _client.post(uri, headers: _headers(auth), body: body);
+    if (res.statusCode == 204) return true;
+    _setError('sendChatAnnouncement', res);
+    return false;
+  }
+
+  /// Sends a shoutout to the specified broadcaster.
+  static Future<bool> sendShoutout(
+    TwitchAuth auth, {
+    required String broadcasterId,
+    required String moderatorId,
+    required String targetUserId,
+  }) async {
+    _lastError = null;
+    final uri = Uri.parse('$_base/chat/shoutouts');
+    final body = jsonEncode({
+      'from_broadcaster_id': broadcasterId,
+      'to_broadcaster_id': targetUserId,
+      'moderator_id': moderatorId,
+    });
+    final res = await _client.post(uri, headers: _headers(auth), body: body);
+    if (res.statusCode == 200) return true;
+    _setError('sendShoutout', res);
     return false;
   }
 

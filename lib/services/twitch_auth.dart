@@ -7,11 +7,9 @@ class TwitchAuth {
   String? accessToken;
   String? refreshToken;
 
-  bool get isConfigured =>
-      TwitchConfig.isConfigured && accessToken != null;
+  bool get isConfigured => TwitchConfig.isConfigured && accessToken != null;
 
-  bool get hasStoredTokens =>
-      accessToken != null && refreshToken != null;
+  bool get hasStoredTokens => accessToken != null && refreshToken != null;
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -27,10 +25,7 @@ class TwitchAuth {
     await prefs.setString('refresh_token', refreshToken ?? '');
   }
 
-  void setCredentials({
-    required String accessToken,
-    String? refreshToken,
-  }) {
+  void setCredentials({required String accessToken, String? refreshToken}) {
     this.accessToken = accessToken;
     this.refreshToken = refreshToken;
     _save();

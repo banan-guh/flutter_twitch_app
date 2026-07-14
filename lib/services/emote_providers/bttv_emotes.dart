@@ -1,0 +1,75 @@
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
+import '../../models/generic_emote.dart';
+
+class BttvEmoteProvider {
+  static Future<List<GenericEmote>> fetchGlobal() async {
+    final uri = Uri.parse('https://api.bttv.com/3/cached/emotes/global');
+    final res = await http.get(uri);
+    if (res.statusCode != 200) return [];
+    final data = jsonDecode(res.body) as List<dynamic>;
+    return _parseEmotes(data, global: true);
+  }
+
+  static Future<List<GenericEmote>> fetchChannel(String channelId) async {
+    final uri = Uri.parse('https://api.bttv.com/3/cached/channels/$channelId');
+    final res = await http.get(uri);
+    if (res.statusCode != 200) return [];
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
+    final channelEmotes = data['channelEmotes'] as List<dynamic>? ?? [];
+    final sharedEmotes = data['sharedEmotes'] as List<dynamic>? ?? [];
+    return [
+      ..._parseEmotes(channelEmotes, channel: true),
+      ..._parseEmotes(sharedEmotes, channel: true),
+    ];
+  }
+
+  static List<GenericEmote> _parseEmotes(
+    List<dynamic> items, {
+    bool global = false,
+    bool channel = false,
+  }) {
+    final emotes = <GenericEmote>[];
+    for (final item in items) {
+      final id = item['id'] as String?;
+      final code = item['code'] as String?;
+      if (id == null || code == null) continue;
+
+      String? url;
+      final isAnimated = item['imageType'] == 'gif';
+      if (isAnimated) {
+        url = 'https://cdn.betterttv.net/emote/$id/3x.gif';
+      } else {
+        url = 'https://cdn.betterttv.net/emote/$id/3x.png';
+      }
+
+      bool isZeroWidth = false;
+      final zwField = item['zeroWidth'];
+      if (zwField is bool) {
+        isZeroWidth = zwField;
+      } else if (zwField != null) {
+        debugPrint(
+          'BTTV: unexpected zeroWidth field type: ${zwField.runtimeType}',
+        );
+      }
+
+      emotes.add(
+        GenericEmote(
+          id: id,
+          code: code,
+          type: EmoteType.bttv,
+          url: url,
+          isAnimated: isAnimated,
+          scope: global
+              ? EmoteScope.global
+              : channel
+              ? EmoteScope.channel
+              : EmoteScope.global,
+          isZeroWidth: isZeroWidth,
+        ),
+      );
+    }
+    return emotes;
+  }
+}

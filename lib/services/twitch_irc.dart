@@ -39,9 +39,11 @@ class IrcService {
 
   final _banController = StreamController<IrcBanEvent>.broadcast();
   final _noticeController = StreamController<IrcNoticeEvent>.broadcast();
+  final _jtvController = StreamController<IrcNoticeEvent>.broadcast();
 
   Stream<IrcBanEvent> get onBan => _banController.stream;
   Stream<IrcNoticeEvent> get onNotice => _noticeController.stream;
+  Stream<IrcNoticeEvent> get onJtvMessage => _jtvController.stream;
 
   bool get isConnected => _channel != null;
 
@@ -133,6 +135,12 @@ class IrcService {
         _handleNotice(line);
         continue;
       }
+
+      // Twitch sends command responses (e.g. /color) as PRIVMSG from jtv
+      if (line.contains('PRIVMSG ') && line.contains(':jtv ')) {
+        _handleJtvMessage(line);
+        continue;
+      }
     }
   }
 
@@ -151,13 +159,15 @@ class IrcService {
     final isTimeout = banDuration != null;
     final duration = isTimeout ? int.tryParse(banDuration) : null;
 
-    _banController.add(IrcBanEvent(
-      channel: channel,
-      user: targetUser,
-      userId: targetUserId,
-      isTimeout: isTimeout,
-      duration: duration,
-    ));
+    _banController.add(
+      IrcBanEvent(
+        channel: channel,
+        user: targetUser,
+        userId: targetUserId,
+        isTimeout: isTimeout,
+        duration: duration,
+      ),
+    );
   }
 
   void _handleNotice(String line) {
@@ -167,10 +177,21 @@ class IrcService {
     final channel = msg.params.isNotEmpty ? msg.params[0].substring(1) : null;
     if (channel == null || msg.trailing == null) return;
 
-    _noticeController.add(IrcNoticeEvent(
-      channel: channel,
-      message: msg.trailing!,
-    ));
+    _noticeController.add(
+      IrcNoticeEvent(channel: channel, message: msg.trailing!),
+    );
+  }
+
+  void _handleJtvMessage(String line) {
+    final msg = parseIrcMessage(line);
+    if (msg == null || msg.trailing == null) return;
+
+    final channel = msg.params.isNotEmpty ? msg.params[0].substring(1) : null;
+    if (channel == null) return;
+
+    _jtvController.add(
+      IrcNoticeEvent(channel: channel, message: msg.trailing!),
+    );
   }
 
   void join(String channel) {
@@ -187,12 +208,19 @@ class IrcService {
     }
   }
 
-  void sendMessage(String channel, String text, {String? replyParentMessageId}) {
-    if (_channel == null || _username == null) return;
+  void sendMessage(
+    String channel,
+    String text, {
+    String? replyParentMessageId,
+  }) {
+    if (_channel == null || _username == null) {
+      return;
+    }
     final tag = replyParentMessageId != null
         ? '@reply-parent-msg-id=$replyParentMessageId '
         : '';
-    _send('${tag}PRIVMSG #$channel :$text');
+    final msg = '${tag}PRIVMSG #$channel :$text';
+    _send(msg);
   }
 
   void dispose() {
@@ -203,6 +231,7 @@ class IrcService {
     _channel?.sink.close();
     _banController.close();
     _noticeController.close();
+    _jtvController.close();
   }
 }
 
@@ -249,7 +278,9 @@ IrcMessage? parseIrcMessage(String line) {
       for (final tag in tags.split(';')) {
         final eq = tag.indexOf('=');
         if (eq != -1) {
-          tagMap[tag.substring(0, eq)] = Uri.decodeComponent(tag.substring(eq + 1));
+          tagMap[tag.substring(0, eq)] = Uri.decodeComponent(
+            tag.substring(eq + 1),
+          );
         }
       }
     }

@@ -2,15 +2,17 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/twitch_message.dart';
 import '../services/twitch_api.dart';
 import '../services/twitch_auth.dart';
 import '../services/twitch_eventsub.dart';
 import '../services/twitch_irc.dart';
 import '../services/recent_messages.dart';
+import '../services/emote_manager.dart';
 import '../widgets/settings.dart';
 import '../widgets/channel_underline_painter.dart';
+import '../widgets/emote_text.dart';
 import '../color_utils.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -38,10 +40,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   late final _eventSub = widget.eventSubService ?? EventSubService();
   late final _irc = widget.ircService ?? IrcService();
-  late final _recentMessages = widget.recentMessagesService ?? RecentMessagesService();
+  late final _recentMessages =
+      widget.recentMessagesService ?? RecentMessagesService();
   final _messageController = TextEditingController();
   final _focusNode = FocusNode();
 
+  final _emoteManager = EmoteManager();
   final _channels = <String>[];
   final _channelNotifier = ValueNotifier<List<String>>([]);
   final _channelScrollController = ScrollController();
@@ -63,6 +67,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   TwitchMessage? _replyToMsg;
   TwitchMessage? _openThreadRoot;
   bool _showingMentions = false;
+  int _maxMessagesPerChannel = 200;
+  double _uiScale = 1.0;
 
   late final AnimationController _underlineAnimController;
   late final CurvedAnimation _underlineCurve;
@@ -75,9 +81,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   StreamSubscription<TwitchMessage>? _messageSub;
   StreamSubscription<EventSubStatus>? _statusSub;
-  StreamSubscription<({String messageId, String targetUser, String channel})>? _deleteSub;
+  StreamSubscription<({String messageId, String targetUser, String channel})>?
+  _deleteSub;
   StreamSubscription<IrcBanEvent>? _ircBanSub;
   StreamSubscription<IrcNoticeEvent>? _ircNoticeSub;
+  StreamSubscription<IrcNoticeEvent>? _ircJtvSub;
 
   String? _currentUserLogin;
   String? _currentUserId;
@@ -105,7 +113,32 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       parent: _panelAnimController,
       curve: Curves.easeOutCubic,
     );
+    _loadMaxMessages();
+    _loadUiScale();
     _connect();
+    _emoteManager.accessToken = widget.twitchAuth.accessToken;
+    _emoteManager.preloadGlobalEmotes();
+    _emoteManager.addListener(_onEmotesChanged);
+  }
+
+  void _onEmotesChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _loadMaxMessages() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _maxMessagesPerChannel = prefs.getInt('max_messages_per_channel') ?? 200;
+    });
+  }
+
+  void _loadUiScale() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _uiScale = prefs.getDouble('ui_scale') ?? 1.0;
+    });
   }
 
   void _cachePositions() {
@@ -117,7 +150,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       final key = _channelItemKeys[channel];
       double w = 0;
       if (key?.currentContext != null) {
-        w = (key!.currentContext!.findRenderObject() as RenderBox?)?.size.width ?? 0;
+        w =
+            (key!.currentContext!.findRenderObject() as RenderBox?)
+                ?.size
+                .width ??
+            0;
       }
       _itemWidths.add(w);
       x += w;
@@ -141,10 +178,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final fraction = (page - page.floor()).clamp(0.0, 1.0);
 
     final viewportWidth = _channelScrollController.position.viewportDimension;
-    final scrollA = (_itemPositions[floorIdx] - viewportWidth / 2 + _itemWidths[floorIdx] / 2)
-        .clamp(0.0, _channelScrollController.position.maxScrollExtent);
-    final scrollB = (_itemPositions[ceilIdx] - viewportWidth / 2 + _itemWidths[ceilIdx] / 2)
-        .clamp(0.0, _channelScrollController.position.maxScrollExtent);
+    final scrollA =
+        (_itemPositions[floorIdx] -
+                viewportWidth / 2 +
+                _itemWidths[floorIdx] / 2)
+            .clamp(0.0, _channelScrollController.position.maxScrollExtent);
+    final scrollB =
+        (_itemPositions[ceilIdx] - viewportWidth / 2 + _itemWidths[ceilIdx] / 2)
+            .clamp(0.0, _channelScrollController.position.maxScrollExtent);
     final targetScroll = scrollA + (scrollB - scrollA) * fraction;
     _channelScrollController.jumpTo(targetScroll);
 
@@ -159,10 +200,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _ircBanSub?.cancel();
     _eventSub.dispose();
     _irc.dispose();
+    _emoteManager.removeListener(_onEmotesChanged);
     _messageController.dispose();
     _focusNode.dispose();
     _ircBanSub?.cancel();
     _ircNoticeSub?.cancel();
+    _ircJtvSub?.cancel();
     _underlineCurve.dispose();
     _underlineAnimController.dispose();
     _panelCurve.dispose();
@@ -225,8 +268,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         }
       }
       if (deletedUser != null && deletedText != null) {
-        _addSystemMessage(event.channel,
-            'A message from $deletedUser was deleted saying: "$deletedText".');
+        _addSystemMessage(
+          event.channel,
+          'A message from $deletedUser was deleted saying: "$deletedText".',
+        );
       }
     });
 
@@ -237,7 +282,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           _currentUserLogin = currentUser['login'];
           _currentUserId = currentUser['id'];
           if (_currentUserId != null) {
-            final color = await TwitchApi.getUserChatColor(auth, _currentUserId!);
+            final color = await TwitchApi.getUserChatColor(
+              auth,
+              _currentUserId!,
+            );
             if (color != null) _currentUserColor = color;
           }
         }
@@ -268,6 +316,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _addSystemMessage(event.channel, event.message);
     });
 
+    _ircJtvSub?.cancel();
+    _ircJtvSub = _irc.onJtvMessage.listen((event) {
+      if (!mounted) return;
+      _addSystemMessage(event.channel, event.message);
+    });
+
     await _eventSub.connect();
   }
 
@@ -277,7 +331,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (channel == null) return;
 
     final login = _currentUserLogin?.toLowerCase();
-    final isOwn = login != null && !msg.isSystem && msg.username.toLowerCase() == login;
+    final isOwn =
+        login != null && !msg.isSystem && msg.username.toLowerCase() == login;
 
     if (isOwn) {
       bool updated = false;
@@ -289,7 +344,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               existing.messageId == null) {
             existing.messageId = msg.messageId;
             if (msg.messageId != null) {
-              _messageKeys.putIfAbsent('$channel:${msg.messageId}', () => GlobalKey());
+              _messageKeys.putIfAbsent(
+                '$channel:${msg.messageId}',
+                () => GlobalKey(),
+              );
             }
             updated = true;
             break;
@@ -315,24 +373,39 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       return;
     }
 
-    final isReplyToMe = login != null && !msg.isSystem && !msg.isHistory &&
-        msg.replyToUser != null && msg.replyToUser!.toLowerCase() == login;
-    final isMention = (login != null && !msg.isSystem && !msg.isHistory && _isMention(msg, login)) || isReplyToMe;
+    final isReplyToMe =
+        login != null &&
+        !msg.isSystem &&
+        !msg.isHistory &&
+        msg.replyToUser != null &&
+        msg.replyToUser!.toLowerCase() == login;
+    final isMention =
+        (login != null &&
+            !msg.isSystem &&
+            !msg.isHistory &&
+            _isMention(msg, login)) ||
+        isReplyToMe;
 
     if (isMention) {
       if (!msg.isHighlighted) _unreadMentions++;
       msg.isHighlighted = true;
     }
 
-    if (login != null && msg.username.toLowerCase() == login && msg.color != null) {
+    if (login != null &&
+        msg.username.toLowerCase() == login &&
+        msg.color != null) {
       _currentUserColor = msg.color;
     }
 
     setState(() {
       _channelMessages.putIfAbsent(channel, () => []);
       _channelMessages[channel]!.insert(0, msg);
+      _truncateChannelMessages(channel);
       if (msg.messageId != null) {
-        _messageKeys.putIfAbsent('$channel:${msg.messageId}', () => GlobalKey());
+        _messageKeys.putIfAbsent(
+          '$channel:${msg.messageId}',
+          () => GlobalKey(),
+        );
       }
       if (msg.isHighlighted) {
         _channelMessages.putIfAbsent(_mentionsChannel, () => []);
@@ -350,8 +423,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _channelMessages.putIfAbsent(channel, () => []);
       _channelMessages[channel]!.insert(
         0,
-        TwitchMessage(username: '', text: text, isSystem: true, channel: channel),
+        TwitchMessage(
+          username: '',
+          text: text,
+          isSystem: true,
+          channel: channel,
+        ),
       );
+      _truncateChannelMessages(channel);
     });
   }
 
@@ -446,8 +525,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               leading: const Icon(Icons.copy_all),
               title: const Text('Copy full message'),
               onTap: () {
-                final ts = '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}';
-                Clipboard.setData(ClipboardData(text: '$ts ${msg.username}: ${msg.text}'));
+                final ts =
+                    '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}';
+                Clipboard.setData(
+                  ClipboardData(text: '$ts ${msg.username}: ${msg.text}'),
+                );
                 Navigator.pop(ctx);
               },
             ),
@@ -467,7 +549,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   void _maybeAddConnected(String channel) {
-    if (_connectionStatus == EventSubStatus.connected && _historyLoaded.contains(channel)) {
+    if (_connectionStatus == EventSubStatus.connected &&
+        _historyLoaded.contains(channel)) {
       _addSystemMessage(channel, 'Connected');
     }
   }
@@ -495,36 +578,47 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _focusNode.requestFocus();
 
     final loadingMsg = TwitchMessage(
-      username: '', text: 'Loading chat history...', isSystem: true, channel: name,
+      username: '',
+      text: 'Loading chat history...',
+      isSystem: true,
+      channel: name,
     );
     _channelMessages[name]!.insert(0, loadingMsg);
 
-    _recentMessages.fetchRecent(name).then((history) {
-      if (!mounted) return;
-      _historyLoaded.add(name);
-      setState(() {
-        if (history.isEmpty) {
-          _addSystemMessage(name, 'No chat history available');
-        } else {
-          final existing = _channelMessages[name]!;
-          final existingIds = existing.map((m) => m.messageId).toSet();
-          for (final msg in history) {
-            if (msg.messageId == null || !existingIds.contains(msg.messageId)) {
-              existing.insert(0, msg);
+    _recentMessages
+        .fetchRecent(name)
+        .then((history) {
+          if (!mounted) return;
+          _historyLoaded.add(name);
+          setState(() {
+            if (history.isEmpty) {
+              _addSystemMessage(name, 'No chat history available');
+            } else {
+              final existing = _channelMessages[name]!;
+              final existingIds = existing.map((m) => m.messageId).toSet();
+              for (final msg in history) {
+                if (msg.messageId == null ||
+                    !existingIds.contains(msg.messageId)) {
+                  existing.insert(0, msg);
+                }
+                if (msg.messageId != null) {
+                  _messageKeys.putIfAbsent(
+                    '$name:${msg.messageId}',
+                    () => GlobalKey(),
+                  );
+                }
+              }
+              _truncateChannelMessages(name);
             }
-            if (msg.messageId != null) {
-              _messageKeys.putIfAbsent('$name:${msg.messageId}', () => GlobalKey());
-            }
-          }
-        }
-      });
-      _maybeAddConnected(name);
-    }).catchError((e) {
-      if (!mounted) return;
-      _historyLoaded.add(name);
-      _addSystemMessage(name, 'Failed to load chat history ($e)');
-      _maybeAddConnected(name);
-    });
+          });
+          _maybeAddConnected(name);
+        })
+        .catchError((e) {
+          if (!mounted) return;
+          _historyLoaded.add(name);
+          _addSystemMessage(name, 'Failed to load chat history ($e)');
+          _maybeAddConnected(name);
+        });
 
     final auth = widget.twitchAuth;
     if (!auth.isConfigured) {
@@ -538,6 +632,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       await _subscribeChannel(name);
     }
 
+    final broadcasterId = _channelUserIds[name];
+    _emoteManager.accessToken = widget.twitchAuth.accessToken;
+    await _emoteManager.resolveEmotes(name, broadcasterId);
+
+    if (mounted && _emoteManager.fetchError != null) {
+      _addSystemMessage(name, 'Emotes: ${_emoteManager.fetchError}');
+    }
+
     if (mounted) setState(() {});
   }
 
@@ -548,7 +650,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final userId = _channelUserIds[channel];
     if (userId == null || _currentUserId == null) return;
 
-    final settings = await TwitchApi.getChatSettings(auth, userId, _currentUserId!);
+    final settings = await TwitchApi.getChatSettings(
+      auth,
+      userId,
+      _currentUserId!,
+    );
     final stream = await TwitchApi.getStreamInfo(auth, userId);
 
     if (!mounted) return;
@@ -621,16 +727,20 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             userId: _currentUserId!,
           );
           if (!okDel) {
-            _addSystemMessage(channelName,
-                'Warning: delete subscription failed (${TwitchApi.lastError ?? "unknown"})');
+            _addSystemMessage(
+              channelName,
+              'Warning: delete subscription failed (${TwitchApi.lastError ?? "unknown"})',
+            );
           }
           break;
         }
         if (attempt == 2) {
-          _addSystemMessage(channelName,
-            'Warning: chat subscription failed (${TwitchApi.lastError ?? "unknown"})');
+          _addSystemMessage(
+            channelName,
+            'Warning: chat subscription failed (${TwitchApi.lastError ?? "unknown"})',
+          );
+        }
       }
-    }
     } catch (_) {}
 
     if (mounted) {
@@ -682,6 +792,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   void _removeChannel(String channel) {
     _irc.part(channel);
+    _emoteManager.evictChannel(channel);
     setState(() {
       _channels.remove(channel);
       _channelNotifier.value = List.of(_channels);
@@ -720,15 +831,42 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
-  void _doSendMessage(String text, String channel, {TwitchMessage? replyTo}) async {
+  void _doSendMessage(
+    String text,
+    String channel, {
+    TwitchMessage? replyTo,
+  }) async {
     final auth = widget.twitchAuth;
+    final reply = replyTo ?? _replyToMsg;
+
+    // Handle slash commands via dedicated API endpoints.
+    if (text.startsWith('/')) {
+      _handleCommand(text, channel, auth);
+      _focusNode.requestFocus();
+      return;
+    }
+
+    // Refresh chat color before sending.
     if (_currentUserId != null && auth.isConfigured) {
       final color = await TwitchApi.getUserChatColor(auth, _currentUserId!);
       if (color != null) _currentUserColor = color;
     }
 
-    final reply = replyTo ?? _replyToMsg;
-    if (_currentUserLogin != null && auth.isConfigured) {
+    // Regular messages: send via Helix API (IRC commands deprecated Feb 2023).
+    if (_currentUserId != null && auth.isConfigured) {
+      final broadcasterId = _channelUserIds[channel];
+      if (broadcasterId != null) {
+        await TwitchApi.sendChatMessage(
+          auth,
+          broadcasterId: broadcasterId,
+          senderId: _currentUserId!,
+          message: text,
+          replyParentMessageId: reply?.messageId,
+        );
+      } else {
+        _irc.sendMessage(channel, text, replyParentMessageId: reply?.messageId);
+      }
+    } else {
       _irc.sendMessage(channel, text, replyParentMessageId: reply?.messageId);
     }
 
@@ -737,29 +875,258 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _replyToMsg = null;
       _channelMessages.putIfAbsent(channel, () => []);
       if (reply?.messageId != null) {
-        _messageKeys.putIfAbsent('$channel:${reply!.messageId}', () => GlobalKey());
+        _messageKeys.putIfAbsent(
+          '$channel:${reply!.messageId}',
+          () => GlobalKey(),
+        );
       }
       _channelMessages[channel]!.insert(
         0,
         TwitchMessage(
           username: _currentUserLogin ?? 'You',
           text: text,
-          color: _currentUserColor ?? (_currentUserLogin != null ? pickColor(_currentUserLogin!) : null),
+          color:
+              _currentUserColor ??
+              (_currentUserLogin != null
+                  ? pickColor(_currentUserLogin!)
+                  : null),
           channel: channel,
           replyToParentId: reply?.messageId,
           replyToUser: reply?.username,
           replyToText: reply?.text,
         ),
       );
+      _truncateChannelMessages(channel);
     });
     _focusNode.requestFocus();
   }
 
+  /// Handles slash commands by routing to the appropriate Twitch API endpoint.
+  void _handleCommand(String text, String channel, TwitchAuth auth) async {
+    final parts = text.split(RegExp(r'\s+'));
+    final cmd = parts[0].toLowerCase();
+    final args = parts.length > 1 ? parts.sublist(1) : [];
+
+    // /me is the only IRC command still supported by Twitch (Feb 2023).
+    // Send via IRC; the response comes back through EventSub/IRC.
+    if (cmd == '/me') {
+      if (_currentUserLogin != null && auth.isConfigured) {
+        _irc.sendMessage(channel, text);
+      }
+      return;
+    }
+
+    final broadcasterId = _channelUserIds[channel];
+    if (_currentUserId == null || broadcasterId == null || !auth.isConfigured) {
+      _addSystemMessage(channel, 'Not authenticated or channel not joined.');
+      return;
+    }
+
+    switch (cmd) {
+      case '/color':
+        if (args.isEmpty) {
+          _addSystemMessage(
+            channel,
+            "Usage: /color <color> - Color must be one of Twitch's supported colors (blue, blue_violet, cadet_blue, chocolate, coral, dodger_blue, firebrick, golden_rod, green, hot_pink, orange_red, red, sea_green, spring_green, yellow_green) or a hex code (#000000) if you have Turbo or Prime.",
+          );
+          return;
+        }
+        final color = args.join(' ');
+        final ok = await TwitchApi.updateUserChatColor(
+          auth,
+          userId: _currentUserId!,
+          color: color,
+        );
+        if (ok) {
+          _addSystemMessage(channel, 'Your color has been changed to $color');
+        } else {
+          _addSystemMessage(
+            channel,
+            'Failed to change color to $color - ${TwitchApi.lastError ?? "unknown error"}',
+          );
+        }
+
+      case '/ban':
+        if (args.isEmpty) {
+          _addSystemMessage(channel, 'Usage: /ban <username> [reason]');
+          return;
+        }
+        final targetLogin = args[0];
+        final reason = args.length > 1 ? args.sublist(1).join(' ') : null;
+        final targetId = await TwitchApi.getUserId(auth, targetLogin);
+        if (targetId == null) {
+          _addSystemMessage(channel, 'User "$targetLogin" not found.');
+          return;
+        }
+        final ok = await TwitchApi.banUser(
+          auth,
+          broadcasterId: broadcasterId,
+          moderatorId: _currentUserId!,
+          userId: targetId,
+          reason: reason,
+        );
+        if (ok) {
+          _addSystemMessage(channel, '$targetLogin has been banned.');
+        } else {
+          _addSystemMessage(
+            channel,
+            'Failed to ban $targetLogin: ${TwitchApi.lastError ?? "unknown error"}',
+          );
+        }
+
+      case '/unban':
+        if (args.isEmpty) {
+          _addSystemMessage(channel, 'Usage: /unban <username>');
+          return;
+        }
+        final targetId = await TwitchApi.getUserId(auth, args[0]);
+        if (targetId == null) {
+          _addSystemMessage(channel, 'User "${args[0]}" not found.');
+          return;
+        }
+        final ok = await TwitchApi.unbanUser(
+          auth,
+          broadcasterId: broadcasterId,
+          moderatorId: _currentUserId!,
+          userId: targetId,
+        );
+        if (ok) {
+          _addSystemMessage(channel, '${args[0]} has been unbanned.');
+        } else {
+          _addSystemMessage(
+            channel,
+            'Failed to unban ${args[0]}: ${TwitchApi.lastError ?? "unknown error"}',
+          );
+        }
+
+      case '/timeout':
+        if (args.isEmpty) {
+          _addSystemMessage(
+            channel,
+            'Usage: /timeout <username> [seconds] [reason]',
+          );
+          return;
+        }
+        final targetLogin = args[0];
+        int duration = 600; // default 10 min
+        String? reason;
+        if (args.length > 1) {
+          final parsed = int.tryParse(args[1]);
+          if (parsed != null) {
+            duration = parsed;
+            if (args.length > 2) reason = args.sublist(2).join(' ');
+          } else {
+            reason = args.sublist(1).join(' ');
+          }
+        }
+        final targetId = await TwitchApi.getUserId(auth, targetLogin);
+        if (targetId == null) {
+          _addSystemMessage(channel, 'User "$targetLogin" not found.');
+          return;
+        }
+        final ok = await TwitchApi.banUser(
+          auth,
+          broadcasterId: broadcasterId,
+          moderatorId: _currentUserId!,
+          userId: targetId,
+          duration: duration,
+          reason: reason,
+        );
+        if (ok) {
+          _addSystemMessage(
+            channel,
+            '$targetLogin timed out for ${duration}s.',
+          );
+        } else {
+          _addSystemMessage(
+            channel,
+            'Failed to timeout $targetLogin: ${TwitchApi.lastError ?? "unknown error"}',
+          );
+        }
+
+      case '/delete':
+        if (args.isEmpty) {
+          _addSystemMessage(channel, 'Usage: /delete <message_id>');
+          return;
+        }
+        final ok = await TwitchApi.deleteChatMessage(
+          auth,
+          broadcasterId: broadcasterId,
+          moderatorId: _currentUserId!,
+          messageId: args[0],
+        );
+        if (ok) {
+          _addSystemMessage(channel, 'Message deleted.');
+        } else {
+          _addSystemMessage(
+            channel,
+            'Failed to delete message: ${TwitchApi.lastError ?? "unknown error"}',
+          );
+        }
+
+      case '/clear':
+        final ok = await TwitchApi.deleteChatMessage(
+          auth,
+          broadcasterId: broadcasterId,
+          moderatorId: _currentUserId!,
+        );
+        if (ok) {
+          _addSystemMessage(channel, 'Chat cleared.');
+        } else {
+          _addSystemMessage(
+            channel,
+            'Failed to clear chat: ${TwitchApi.lastError ?? "unknown error"}',
+          );
+        }
+
+      case '/announce':
+        if (args.isEmpty) {
+          _addSystemMessage(channel, 'Usage: /announce <message>');
+          return;
+        }
+        final ok = await TwitchApi.sendChatAnnouncement(
+          auth,
+          broadcasterId: broadcasterId,
+          moderatorId: _currentUserId!,
+          message: args.join(' '),
+        );
+        if (!ok) {
+          _addSystemMessage(
+            channel,
+            'Failed to announce: ${TwitchApi.lastError ?? "unknown error"}',
+          );
+        }
+
+      case '/shoutout':
+        if (args.isEmpty) {
+          _addSystemMessage(channel, 'Usage: /shoutout <username>');
+          return;
+        }
+        final targetId = await TwitchApi.getUserId(auth, args[0]);
+        if (targetId == null) {
+          _addSystemMessage(channel, 'User "${args[0]}" not found.');
+          return;
+        }
+        final ok = await TwitchApi.sendShoutout(
+          auth,
+          broadcasterId: broadcasterId,
+          moderatorId: _currentUserId!,
+          targetUserId: targetId,
+        );
+        if (!ok) {
+          _addSystemMessage(
+            channel,
+            'Failed to send shoutout: ${TwitchApi.lastError ?? "unknown error"}',
+          );
+        }
+
+      default:
+        _addSystemMessage(channel, 'Unknown command: $cmd');
+    }
+  }
+
   ScrollController _scrollCtrl(String channel) {
-    return _scrollControllers.putIfAbsent(
-      channel,
-      () => ScrollController(),
-    );
+    return _scrollControllers.putIfAbsent(channel, () => ScrollController());
   }
 
   TwitchMessage? _findThreadRoot(TwitchMessage msg) {
@@ -768,14 +1135,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final msgs = _channelMessages[channel];
     if (msgs == null) return null;
 
-    final hasReplies = msg.messageId != null && msgs.any((m) => m.replyToParentId == msg.messageId);
+    final hasReplies =
+        msg.messageId != null &&
+        msgs.any((m) => m.replyToParentId == msg.messageId);
     if (!hasReplies && msg.replyToParentId == null) return null;
 
     final visited = <String>{};
     TwitchMessage current = msg;
-    while (current.replyToParentId != null && !visited.contains(current.replyToParentId)) {
+    while (current.replyToParentId != null &&
+        !visited.contains(current.replyToParentId)) {
       visited.add(current.replyToParentId!);
-      final parent = msgs.where((m) => m.messageId == current.replyToParentId).firstOrNull;
+      final parent = msgs
+          .where((m) => m.messageId == current.replyToParentId)
+          .firstOrNull;
       if (parent == null) break;
       current = parent;
     }
@@ -830,11 +1202,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     do {
       added = false;
       for (final m in allMsgs) {
-        if (m.messageId != null && threadIds.contains(m.messageId) && !threadMsgs.contains(m)) {
+        if (m.messageId != null &&
+            threadIds.contains(m.messageId) &&
+            !threadMsgs.contains(m)) {
           threadMsgs.add(m);
           added = true;
         }
-        if (m.replyToParentId != null && threadIds.contains(m.replyToParentId) && !threadMsgs.contains(m)) {
+        if (m.replyToParentId != null &&
+            threadIds.contains(m.replyToParentId) &&
+            !threadMsgs.contains(m)) {
           if (m.messageId != null) threadIds.add(m.messageId!);
           threadMsgs.add(m);
           added = true;
@@ -860,11 +1236,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         children: [
           GestureDetector(
             onVerticalDragUpdate: (details) {
-              final newValue = (_panelAnimController.value - details.primaryDelta! / context.size!.height).clamp(0.0, 1.0);
+              final newValue =
+                  (_panelAnimController.value -
+                          details.primaryDelta! / context.size!.height)
+                      .clamp(0.0, 1.0);
               _panelAnimController.value = newValue;
             },
             onVerticalDragEnd: (details) {
-              if (_panelAnimController.value < 0.5 || (details.primaryVelocity ?? 0) < -200) {
+              if (_panelAnimController.value < 0.5 ||
+                  (details.primaryVelocity ?? 0) < -200) {
                 _closePanel();
               } else {
                 _panelAnimController.forward();
@@ -921,24 +1301,37 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     itemCount: threadMsgs.length,
                     itemBuilder: (_, i) {
                       final msg = threadMsgs[threadMsgs.length - 1 - i];
-                      final ts = '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}';
+                      final ts =
+                          '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}';
 
                       if (msg.isSystem) {
                         return Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 2,
+                          ),
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               SizedBox(
                                 width: 45,
-                                child: Text(ts, textAlign: TextAlign.right,
-                                  style: const TextStyle(fontSize: 13, color: Colors.grey),
+                                child: Text(
+                                  ts,
+                                  textAlign: TextAlign.right,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.grey,
+                                  ),
                                 ),
                               ),
                               const SizedBox(width: 4),
                               Expanded(
-                                child: Text(msg.text,
-                                  style: const TextStyle(fontSize: 13, color: Colors.grey),
+                                child: Text(
+                                  msg.text,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.grey,
+                                  ),
                                 ),
                               ),
                             ],
@@ -951,42 +1344,74 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           _showThreadMessageMenu(msg);
                         },
                         child: Opacity(
-                        opacity: msg.deleted ? 0.35 : 1,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              SizedBox(
-                                width: 45,
-                                child: Text(ts, textAlign: TextAlign.right,
-                                  style: const TextStyle(fontSize: 14, color: Colors.grey),
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              Expanded(
-                                child: Text.rich(
-                                  TextSpan(
-                                    children: [
-                                      TextSpan(
-                                        text: '${msg.username}: ',
-                                        style: TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600,
-                                          color: parseColor(msg.color, background: surface),
-                                        ),
-                                      ),
-                                      TextSpan(
-                                        text: msg.text,
-                                        style: const TextStyle(fontSize: 14),
-                                      ),
-                                    ],
+                          opacity: msg.deleted ? 0.35 : 1,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 2,
+                            ),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                SizedBox(
+                                  width: 45,
+                                  child: Text(
+                                    ts,
+                                    textAlign: TextAlign.right,
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.grey,
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ],
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Text.rich(
+                                    TextSpan(
+                                      children: msg.isAction
+                                          ? [
+                                              TextSpan(
+                                                text: '${msg.username} ',
+                                                style: TextStyle(
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: parseColor(
+                                                    msg.color,
+                                                    background: surface,
+                                                  ),
+                                                ),
+                                              ),
+                                              ..._buildMessageSpans(
+                                                msg,
+                                                msg.channel ?? '',
+                                                surface,
+                                                colored: true,
+                                              ),
+                                            ]
+                                          : [
+                                              TextSpan(
+                                                text: '${msg.username}: ',
+                                                style: TextStyle(
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: parseColor(
+                                                    msg.color,
+                                                    background: surface,
+                                                  ),
+                                                ),
+                                              ),
+                                              ..._buildMessageSpans(
+                                                msg,
+                                                msg.channel ?? '',
+                                                surface,
+                                              ),
+                                            ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
                         ),
                       );
                     },
@@ -1009,11 +1434,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         children: [
           GestureDetector(
             onVerticalDragUpdate: (details) {
-              final newValue = (_panelAnimController.value - details.primaryDelta! / context.size!.height).clamp(0.0, 1.0);
+              final newValue =
+                  (_panelAnimController.value -
+                          details.primaryDelta! / context.size!.height)
+                      .clamp(0.0, 1.0);
               _panelAnimController.value = newValue;
             },
             onVerticalDragEnd: (details) {
-              if (_panelAnimController.value < 0.5 || (details.primaryVelocity ?? 0) < -200) {
+              if (_panelAnimController.value < 0.5 ||
+                  (details.primaryVelocity ?? 0) < -200) {
                 _closePanel();
               } else {
                 _panelAnimController.forward();
@@ -1070,24 +1499,37 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     itemCount: msgs.length,
                     itemBuilder: (_, i) {
                       final msg = msgs[msgs.length - 1 - i];
-                      final ts = '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}';
+                      final ts =
+                          '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}';
 
                       if (msg.isSystem) {
                         return Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 2,
+                          ),
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               SizedBox(
                                 width: 45,
-                                child: Text(ts, textAlign: TextAlign.right,
-                                  style: const TextStyle(fontSize: 13, color: Colors.grey),
+                                child: Text(
+                                  ts,
+                                  textAlign: TextAlign.right,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.grey,
+                                  ),
                                 ),
                               ),
                               const SizedBox(width: 4),
                               Expanded(
-                                child: Text(msg.text,
-                                  style: const TextStyle(fontSize: 13, color: Colors.grey),
+                                child: Text(
+                                  msg.text,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.grey,
+                                  ),
                                 ),
                               ),
                             ],
@@ -1098,34 +1540,66 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       return Opacity(
                         opacity: msg.deleted ? 0.35 : 1,
                         child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 2,
+                          ),
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               SizedBox(
                                 width: 45,
-                                child: Text(ts, textAlign: TextAlign.right,
-                                  style: const TextStyle(fontSize: 14, color: Colors.grey),
+                                child: Text(
+                                  ts,
+                                  textAlign: TextAlign.right,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.grey,
+                                  ),
                                 ),
                               ),
                               const SizedBox(width: 4),
                               Expanded(
                                 child: Text.rich(
                                   TextSpan(
-                                    children: [
-                                      TextSpan(
-                                        text: '${msg.username}: ',
-                                        style: TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600,
-                                          color: parseColor(msg.color, background: surface),
-                                        ),
-                                      ),
-                                      TextSpan(
-                                        text: msg.text,
-                                        style: const TextStyle(fontSize: 14),
-                                      ),
-                                    ],
+                                    children: msg.isAction
+                                        ? [
+                                            TextSpan(
+                                              text: '${msg.username} ',
+                                              style: TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w600,
+                                                color: parseColor(
+                                                  msg.color,
+                                                  background: surface,
+                                                ),
+                                              ),
+                                            ),
+                                            ..._buildMessageSpans(
+                                              msg,
+                                              msg.channel ?? '',
+                                              surface,
+                                              colored: true,
+                                            ),
+                                          ]
+                                        : [
+                                            TextSpan(
+                                              text: '${msg.username}: ',
+                                              style: TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w600,
+                                                color: parseColor(
+                                                  msg.color,
+                                                  background: surface,
+                                                ),
+                                              ),
+                                            ),
+                                            ..._buildMessageSpans(
+                                              msg,
+                                              msg.channel ?? '',
+                                              surface,
+                                            ),
+                                          ],
                                   ),
                                 ),
                               ),
@@ -1162,9 +1636,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     double? startContentX;
     if (_underway && _animStartContentX != null && _animEndContentX != null) {
-      startContentX = _animStartContentX! +
-          (_animEndContentX! - _animStartContentX!) *
-              _underlineCurve.value;
+      startContentX =
+          _animStartContentX! +
+          (_animEndContentX! - _animStartContentX!) * _underlineCurve.value;
     } else if (_selectedChannel != null && _itemPositions.isNotEmpty) {
       final prevIdx = _channels.indexOf(_selectedChannel!);
       if (prevIdx >= 0 && prevIdx < _itemPositions.length) {
@@ -1199,13 +1673,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     if (animatePageView) {
       _programmaticPageChange = true;
-      _pageController.animateToPage(
-        index,
-        duration: const Duration(milliseconds: 250),
-        curve: Curves.easeInOut,
-      ).whenComplete(() {
-        _programmaticPageChange = false;
-      });
+      _pageController
+          .animateToPage(
+            index,
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeInOut,
+          )
+          .whenComplete(() {
+            _programmaticPageChange = false;
+          });
     }
     _requestScrollToChannel(index);
   }
@@ -1214,10 +1690,20 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final requestId = ++_scrollRequestId;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (requestId != _scrollRequestId) return;
-      if (!_channelScrollController.hasClients || index < 0 || index >= _channels.length) return;
+      if (!_channelScrollController.hasClients ||
+          index < 0 ||
+          index >= _channels.length) {
+        return;
+      }
       final viewportWidth = _channelScrollController.position.viewportDimension;
-      final targetScroll = _itemPositions[index] - (viewportWidth / 2) + (_itemWidths[index] / 2);
-      final clamped = targetScroll.clamp(0.0, _channelScrollController.position.maxScrollExtent);
+      final targetScroll =
+          _itemPositions[index] -
+          (viewportWidth / 2) +
+          (_itemWidths[index] / 2);
+      final clamped = targetScroll.clamp(
+        0.0,
+        _channelScrollController.position.maxScrollExtent,
+      );
       if (animate) {
         _channelScrollController.animateTo(
           clamped,
@@ -1234,12 +1720,46 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return _channelMessages[channel] ?? [];
   }
 
+  void _truncateChannelMessages(String channel) {
+    final maxMessages = _maxMessagesPerChannel;
+    if (maxMessages <= 0) return;
+    final msgs = _channelMessages[channel];
+    if (msgs == null || msgs.length <= maxMessages) return;
+
+    final threadIds = <String>{};
+    for (final m in msgs) {
+      if (m.replyToParentId != null) {
+        threadIds.add(m.replyToParentId!);
+      }
+    }
+
+    while (msgs.length > maxMessages) {
+      bool removed = false;
+      for (int i = msgs.length - 1; i >= 0; i--) {
+        final m = msgs[i];
+        final inThread =
+            (m.messageId != null && threadIds.contains(m.messageId!)) ||
+            m.replyToParentId != null;
+        if (!inThread) {
+          msgs.removeAt(i);
+          removed = true;
+          break;
+        }
+      }
+      if (!removed) break;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final dividerColor = theme.dividerColor;
 
-    return Scaffold(
+    return MediaQuery(
+      data: MediaQuery.of(context).copyWith(
+        textScaler: TextScaler.linear(_uiScale),
+      ),
+      child: Scaffold(
       body: Column(
         children: [
           SafeArea(
@@ -1248,6 +1768,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               padding: const EdgeInsets.symmetric(horizontal: 4),
               child: Row(
                 children: [
+                  const Spacer(),
                   IconButton(
                     icon: const Icon(Icons.add),
                     tooltip: 'Join channel',
@@ -1271,7 +1792,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       }
                     },
                   ),
-                  const Spacer(),
                   SettingsButton(
                     twitchAuth: widget.twitchAuth,
                     onThemeChanged: widget.onThemeChanged,
@@ -1298,145 +1818,179 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           Column(
                             children: [
                               Container(
-                            decoration: BoxDecoration(
-                              border: Border(bottom: BorderSide(color: dividerColor)),
-                            ),
-                            child: SizedBox(
-                              height: 40,
-                              child: Stack(
-                                children: [
-                                  Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: ScrollbarTheme(
-                                      data: const ScrollbarThemeData(thickness: WidgetStatePropertyAll(0)),
-                                      child: SingleChildScrollView(
-                                      scrollDirection: Axis.horizontal,
-                                      controller: _channelScrollController,
-                                      physics: const ClampingScrollPhysics(),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: _channels.map((channel) {
-                                          final selected = channel == _selectedChannel;
-                                          return GestureDetector(
-                                            behavior: HitTestBehavior.translucent,
-                                            onTap: () => _selectChannel(
-                                              _channels.indexOf(channel),
+                                decoration: BoxDecoration(
+                                  border: Border(
+                                    bottom: BorderSide(color: dividerColor),
+                                  ),
+                                ),
+                                child: SizedBox(
+                                  height: 40,
+                                  child: Stack(
+                                    children: [
+                                      Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: ScrollbarTheme(
+                                          data: const ScrollbarThemeData(
+                                            thickness: WidgetStatePropertyAll(
+                                              0,
                                             ),
-                                            child: Container(
-                                              key: _channelItemKeys.putIfAbsent(channel, () => GlobalKey()),
-                                              padding: const EdgeInsets.symmetric(horizontal: 12),
-                                              height: 40,
-                                              alignment: Alignment.center,
-                                              child: Text(
+                                          ),
+                                          child: SingleChildScrollView(
+                                            scrollDirection: Axis.horizontal,
+                                            controller:
+                                                _channelScrollController,
+                                            physics:
+                                                const ClampingScrollPhysics(),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: _channels.map((
                                                 channel,
-                                                style: TextStyle(
-                                                  fontSize: 14,
-                                                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                                                  color: selected ? theme.colorScheme.primary : null,
-                                                ),
-                                              ),
+                                              ) {
+                                                final selected =
+                                                    channel == _selectedChannel;
+                                                return GestureDetector(
+                                                  behavior: HitTestBehavior
+                                                      .translucent,
+                                                  onTap: () => _selectChannel(
+                                                    _channels.indexOf(channel),
+                                                  ),
+                                                  child: Container(
+                                                    key: _channelItemKeys
+                                                        .putIfAbsent(
+                                                          channel,
+                                                          () => GlobalKey(),
+                                                        ),
+                                                    padding:
+                                                        const EdgeInsets.symmetric(
+                                                          horizontal: 12,
+                                                        ),
+                                                    height: 40,
+                                                    alignment: Alignment.center,
+                                                    child: Text(
+                                                      channel,
+                                                      style: TextStyle(
+                                                        fontSize: 14,
+                                                        fontWeight: selected
+                                                            ? FontWeight.w600
+                                                            : FontWeight.normal,
+                                                        color: selected
+                                                            ? theme
+                                                                  .colorScheme
+                                                                  .primary
+                                                            : null,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                );
+                                              }).toList(),
                                             ),
-                                          );
-                                        }).toList(),
+                                          ),
+                                        ),
                                       ),
-                                    ),
+                                      Positioned.fill(
+                                        child: IgnorePointer(
+                                          child: CustomPaint(
+                                            key: _underlineKey,
+                                            painter: ChannelUnderlinePainter(
+                                              scrollController:
+                                                  _channelScrollController,
+                                              pageController: _pageController,
+                                              itemPositions: _itemPositions,
+                                              itemWidths: _itemWidths,
+                                              selectedIndex:
+                                                  _selectedChannel == null
+                                                  ? -1
+                                                  : _channels.indexOf(
+                                                      _selectedChannel!,
+                                                    ),
+                                              color: theme.colorScheme.primary,
+                                              underlineAnimation: _underway
+                                                  ? _underlineCurve
+                                                  : null,
+                                              animStartContentX: _underway
+                                                  ? _animStartContentX
+                                                  : null,
+                                              animEndContentX: _underway
+                                                  ? _animEndContentX
+                                                  : null,
+                                              repaint: _underway
+                                                  ? Listenable.merge([
+                                                      _channelScrollController,
+                                                      _pageController,
+                                                      _underlineCurve,
+                                                    ])
+                                                  : Listenable.merge([
+                                                      _channelScrollController,
+                                                      _pageController,
+                                                    ]),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                                Positioned.fill(
-                                  child: IgnorePointer(
-                                    child: CustomPaint(
-                                      key: _underlineKey,
-                                      painter: ChannelUnderlinePainter(
-                                        scrollController: _channelScrollController,
-                                        pageController: _pageController,
-                                        itemPositions: _itemPositions,
-                                        itemWidths: _itemWidths,
-                                        selectedIndex: _selectedChannel == null
-                                            ? -1
-                                            : _channels.indexOf(_selectedChannel!),
-                                        color: theme.colorScheme.primary,
-                                        underlineAnimation: _underway ? _underlineCurve : null,
-                                        animStartContentX: _underway ? _animStartContentX : null,
-                                        animEndContentX: _underway ? _animEndContentX : null,
-                                        repaint: _underway
-                                            ? Listenable.merge([
-                                                _channelScrollController,
-                                                _pageController,
-                                                _underlineCurve,
-                                              ])
-                                            : Listenable.merge([
-                                                _channelScrollController,
-                                                _pageController,
-                                              ]),
-                                      ),
-                                    ),
+                              ),
+                              Expanded(
+                                child: NotificationListener<ScrollNotification>(
+                                  onNotification: _onPageScrollNotification,
+                                  child: PageView.builder(
+                                    controller: _pageController,
+                                    itemCount: _channels.length,
+                                    onPageChanged: (i) {
+                                      if (_programmaticPageChange) return;
+                                      setState(() {
+                                        _selectedChannel = _channels[i];
+                                        _openThreadRoot = null;
+                                        _showingMentions = false;
+                                      });
+                                      _requestScrollToChannel(i);
+                                    },
+                                    itemBuilder: (_, i) =>
+                                        _buildChat(_channels[i]),
                                   ),
                                 ),
-                              ],
-                            ),
-                          ),
-                          ),
-                          Expanded(
-                            child: ScrollConfiguration(
-                              behavior: ScrollConfiguration.of(context).copyWith(
-                                dragDevices: {
-                                  PointerDeviceKind.touch,
-                                  PointerDeviceKind.mouse,
-                                  PointerDeviceKind.stylus,
-                                  PointerDeviceKind.unknown,
-                                },
                               ),
-                              child: NotificationListener<ScrollNotification>(
-                                onNotification: _onPageScrollNotification,
-                                child: PageView.builder(
-                                  controller: _pageController,
-                                  itemCount: _channels.length,
-                                  onPageChanged: (i) {
-                                    if (_programmaticPageChange) return;
-                                    setState(() {
-                                      _selectedChannel = _channels[i];
-                                      _openThreadRoot = null;
-                                      _showingMentions = false;
-                                    });
-                                    _requestScrollToChannel(i);
-                                  },
-                                  itemBuilder: (_, i) => _buildChat(_channels[i]),
-                                ),
+                            ],
+                          ),
+                          if (_openThreadRoot != null)
+                            Positioned(
+                              left: 0,
+                              right: 0,
+                              top: 0,
+                              height: stackHeight,
+                              child: AnimatedBuilder(
+                                animation: _panelCurve,
+                                builder: (context, child) =>
+                                    Transform.translate(
+                                      offset: Offset(
+                                        0,
+                                        (1 - _panelCurve.value) * stackHeight,
+                                      ),
+                                      child: child,
+                                    ),
+                                child: _buildThreadPanel(),
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                       if (_openThreadRoot != null)
-                        Positioned(
-                          left: 0,
-                          right: 0,
-                          top: 0,
-                          height: stackHeight,
-                          child: AnimatedBuilder(
-                            animation: _panelCurve,
-                            builder: (context, child) => Transform.translate(
-                              offset: Offset(0, (1 - _panelCurve.value) * stackHeight),
-                              child: child,
+                          if (_showingMentions)
+                            Positioned(
+                              left: 0,
+                              right: 0,
+                              top: 0,
+                              height: stackHeight,
+                              child: AnimatedBuilder(
+                                animation: _panelCurve,
+                                builder: (context, child) =>
+                                    Transform.translate(
+                                      offset: Offset(
+                                        0,
+                                        (1 - _panelCurve.value) * stackHeight,
+                                      ),
+                                      child: child,
+                                    ),
+                                child: _buildMentionsPanel(),
+                              ),
                             ),
-                            child: _buildThreadPanel(),
-                          ),
-                        ),
-                      if (_showingMentions)
-                        Positioned(
-                          left: 0,
-                          right: 0,
-                          top: 0,
-                          height: stackHeight,
-                          child: AnimatedBuilder(
-                            animation: _panelCurve,
-                            builder: (context, child) => Transform.translate(
-                              offset: Offset(0, (1 - _panelCurve.value) * stackHeight),
-                              child: child,
-                            ),
-                            child: _buildMentionsPanel(),
-                          ),
-                        ),
                         ],
                       );
                     },
@@ -1458,12 +2012,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   hintText: _openThreadRoot != null
                       ? 'Reply to thread...'
                       : _showingMentions
-                          ? 'Type a message...'
-                          : null,
+                      ? 'Type a message...'
+                      : null,
                 ),
-                if (_chatStatus[_selectedChannel] != null && _chatStatus[_selectedChannel]!.isNotEmpty)
+                if (_chatStatus[_selectedChannel] != null &&
+                    _chatStatus[_selectedChannel]!.isNotEmpty)
                   Padding(
-                    padding: const EdgeInsets.only(left: 12, right: 12, bottom: 4),
+                    padding: const EdgeInsets.only(
+                      left: 12,
+                      right: 12,
+                      bottom: 4,
+                    ),
                     child: Text(
                       _chatStatus[_selectedChannel]!,
                       style: const TextStyle(fontSize: 12, color: Colors.grey),
@@ -1474,6 +2033,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             ),
           ),
         ],
+      ),
       ),
     );
   }
@@ -1496,6 +2056,39 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
+  List<InlineSpan> _buildMessageSpans(
+    TwitchMessage msg,
+    String channel,
+    Color surface, {
+    bool colored = false,
+  }) {
+    final channelEmotes = _emoteManager.byCode(channel);
+    final emoteSpans = EmoteText.build(
+      text: msg.text,
+      twitchPositions: msg.emotePositions,
+      channelEmotes: channelEmotes,
+    );
+    if (colored) {
+      return [
+        ...emoteSpans.map((span) {
+          if (span is TextSpan) {
+            return TextSpan(
+              text: span.text,
+              style: TextStyle(
+                fontSize: 14,
+                color: parseColor(msg.color, background: surface),
+                decoration: TextDecoration.none,
+              ),
+              recognizer: span.recognizer,
+            );
+          }
+          return span;
+        }),
+      ];
+    }
+    return emoteSpans;
+  }
+
   Widget _buildChat(String channel) {
     final msgs = _messages(channel);
     final surface = Theme.of(context).colorScheme.surface;
@@ -1511,126 +2104,162 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         controller: _scrollCtrl(channel),
         reverse: true,
         itemCount: msgs.length,
-      itemBuilder: (_, i) {
-        final msg = msgs[i];
+        itemBuilder: (_, i) {
+          final msg = msgs[i];
 
-        final key = msg.messageId != null
-            ? _messageKeys.putIfAbsent('$channel:${msg.messageId}', () => GlobalKey())
-            : null;
+          final key = msg.messageId != null
+              ? _messageKeys.putIfAbsent(
+                  '$channel:${msg.messageId}',
+                  () => GlobalKey(),
+                )
+              : null;
 
-        Widget body;
-        final ts = '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}';
+          Widget body;
+          final ts =
+              '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}';
 
-        if (msg.isSystem) {
-          body = Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(
-                  width: 45,
-                  child: Text(ts, textAlign: TextAlign.right,
-                    style: const TextStyle(fontSize: 14, color: Colors.grey, decoration: TextDecoration.none),
-                  ),
-                ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text.rich(
-                    TextSpan(
-                      children: parseTextWithLinks(msg.text),
-                      style: const TextStyle(fontSize: 14, color: Colors.grey, decoration: TextDecoration.none),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          );
-        } else {
-          body = Opacity(
-            opacity: msg.deleted || msg.isHistory ? 0.35 : 1,
-            child: Padding(
+          if (msg.isSystem) {
+            body = Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   SizedBox(
                     width: 45,
-                    child: Text(ts, textAlign: TextAlign.right,
-                      style: const TextStyle(fontSize: 14, color: Colors.grey, decoration: TextDecoration.none),
+                    child: Text(
+                      ts,
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey,
+                        decoration: TextDecoration.none,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 4),
                   Expanded(
                     child: Text.rich(
                       TextSpan(
-                        children: [
-                          TextSpan(
-                            text: '${msg.username}: ',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: parseColor(msg.color, background: surface),
-                              decoration: TextDecoration.none,
-                            ),
-                            recognizer: TapGestureRecognizer()
-                              ..onTap = () => _showUserProfile(msg.username, msg.userId),
-                          ),
-                          ...parseTextWithLinks(msg.text),
-                        ],
+                        children: parseTextWithLinks(msg.text),
+                        style: const TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey,
+                          decoration: TextDecoration.none,
+                        ),
                       ),
                     ),
                   ),
                 ],
               ),
-            ),
-          );
-        }
-
-        if (msg.isHighlighted) {
-          body = Container(
-            color: Colors.red.withValues(alpha: 0.06),
-            child: Stack(
-              children: [
-                body,
-                Positioned(
-                  left: 0,
-                  top: 0,
-                  bottom: 0,
-                  child: Container(
-                    width: 3,
-                    color: Colors.red.withValues(alpha: 0.4),
-                  ),
+            );
+          } else {
+            body = Opacity(
+              opacity: msg.deleted ? 0.35 : 1,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 2,
                 ),
-              ],
-            ),
-          );
-        }
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: 45,
+                      child: Text(
+                        ts,
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text.rich(
+                        TextSpan(
+                          children: [
+                            TextSpan(
+                              text: msg.isAction
+                                  ? '${msg.username} '
+                                  : '${msg.username}: ',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: msg.isAction
+                                    ? parseColor(msg.color, background: surface)
+                                    : parseColor(
+                                        msg.color,
+                                        background: surface,
+                                      ),
+                                decoration: TextDecoration.none,
+                              ),
+                              recognizer: TapGestureRecognizer()
+                                ..onTap = () =>
+                                    _showUserProfile(msg.username, msg.userId),
+                            ),
+                            if (msg.isAction)
+                              ..._buildMessageSpans(
+                                msg,
+                                channel,
+                                surface,
+                                colored: true,
+                              )
+                            else
+                              ..._buildMessageSpans(msg, channel, surface),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
 
-        if (msg.replyToUser != null) {
-          body = InkWell(
-            onLongPress: msg.isSystem ? null : () => _showMessageMenu(msg),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _buildReplyIndicator(msg),
-                body,
-              ],
-            ),
-          );
-        } else if (!msg.isSystem) {
-          body = InkWell(
-            onLongPress: () => _showMessageMenu(msg),
-            child: body,
-          );
-        }
+          if (msg.isHighlighted) {
+            body = Container(
+              color: Colors.red.withValues(alpha: 0.06),
+              child: Stack(
+                children: [
+                  body,
+                  Positioned(
+                    left: 0,
+                    top: 0,
+                    bottom: 0,
+                    child: Container(
+                      width: 3,
+                      color: Colors.red.withValues(alpha: 0.4),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
 
-        if (key != null) {
-          body = Container(key: key, child: body);
-        }
-        return body;
-      },
-    ),
+          if (msg.replyToUser != null) {
+            body = InkWell(
+              onLongPress: msg.isSystem ? null : () => _showMessageMenu(msg),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [_buildReplyIndicator(msg), body],
+              ),
+            );
+          } else if (!msg.isSystem) {
+            body = InkWell(
+              onLongPress: () => _showMessageMenu(msg),
+              child: body,
+            );
+          }
+
+          if (key != null) {
+            body = Container(key: key, child: body);
+          }
+          return body;
+        },
+      ),
     );
   }
 
@@ -1649,7 +2278,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.subdirectory_arrow_right, size: 14, color: Colors.grey[500]),
+            Icon(
+              Icons.subdirectory_arrow_right,
+              size: 14,
+              color: Colors.grey[500],
+            ),
             const SizedBox(width: 4),
             Flexible(
               child: Text(
@@ -1672,34 +2305,6 @@ bool isMention(String text, String login) {
     if (lower == '@$login' || lower == login) return true;
   }
   return false;
-}
-
-List<InlineSpan> parseTextWithLinks(String text) {
-  final urlRegExp = RegExp(
-    r'(?:https?://|www\.)[^\s<]+'
-    r'|[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:/\S*)?',
-  );
-  final spans = <InlineSpan>[];
-  int lastEnd = 0;
-  for (final match in urlRegExp.allMatches(text)) {
-    if (match.start > lastEnd) {
-      spans.add(TextSpan(text: text.substring(lastEnd, match.start)));
-    }
-    var url = match.group(0)!;
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      url = 'https://$url';
-    }
-    spans.add(TextSpan(
-      text: match.group(0),
-      style: const TextStyle(color: Colors.blue),
-      recognizer: TapGestureRecognizer()..onTap = () => launchUrl(Uri.parse(url)),
-    ));
-    lastEnd = match.end;
-  }
-  if (lastEnd < text.length) {
-    spans.add(TextSpan(text: text.substring(lastEnd)));
-  }
-  return spans;
 }
 
 class _UserProfileSheet extends StatefulWidget {
@@ -1736,7 +2341,10 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
 
   Future<void> _fetchProfile() async {
     try {
-      final profile = await TwitchApi.getUserProfile(widget.twitchAuth, widget.username);
+      final profile = await TwitchApi.getUserProfile(
+        widget.twitchAuth,
+        widget.username,
+      );
       if (!mounted) return;
       if (profile != null) {
         setState(() {
@@ -1789,12 +2397,16 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
           ),
           const SizedBox(height: 16),
           if (_loading) ...[
-            const Center(child: Padding(
-              padding: EdgeInsets.all(24),
-              child: CircularProgressIndicator(),
-            )),
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: CircularProgressIndicator(),
+              ),
+            ),
           ] else if (_error != null) ...[
-            Center(child: Text(_error!, style: const TextStyle(color: Colors.grey))),
+            Center(
+              child: Text(_error!, style: const TextStyle(color: Colors.grey)),
+            ),
           ] else if (_profile != null) ...[
             Row(
               children: [
@@ -1809,7 +2421,11 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
                       width: 64,
                       height: 64,
                       color: theme.colorScheme.surfaceContainerHighest,
-                      child: Icon(Icons.person, size: 32, color: theme.colorScheme.onSurfaceVariant),
+                      child: Icon(
+                        Icons.person,
+                        size: 32,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
                 ),
@@ -1849,7 +2465,9 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
               onTap: () {
                 widget.onClose();
                 final text = widget.messageController.text;
-                final prefix = text.isEmpty ? '@${widget.username} ' : '@${widget.username} ';
+                final prefix = text.isEmpty
+                    ? '@${widget.username} '
+                    : '@${widget.username} ';
                 widget.messageController.text = '$prefix$text';
                 widget.messageController.selection = TextSelection.fromPosition(
                   TextPosition(offset: widget.messageController.text.length),
@@ -1876,7 +2494,9 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
                 final userId = widget.userId ?? _profile?['id'] as String?;
                 if (userId == null) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Cannot block: user ID unknown')),
+                    const SnackBar(
+                      content: Text('Cannot block: user ID unknown'),
+                    ),
                   );
                   return;
                 }
@@ -1884,10 +2504,18 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
                   context: context,
                   builder: (ctx) => AlertDialog(
                     title: const Text('Block user'),
-                    content: Text('Block ${widget.username}? They will not be able to whisper you or host your channel.'),
+                    content: Text(
+                      'Block ${widget.username}? They will not be able to whisper you or host your channel.',
+                    ),
                     actions: [
-                      TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-                      FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Block')),
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('Cancel'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('Block'),
+                      ),
                     ],
                   ),
                 );
@@ -1895,7 +2523,13 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
                 final ok = await TwitchApi.blockUser(widget.twitchAuth, userId);
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(ok ? '${widget.username} blocked' : 'Block failed: ${TwitchApi.lastError ?? "unknown"}')),
+                  SnackBar(
+                    content: Text(
+                      ok
+                          ? '${widget.username} blocked'
+                          : 'Block failed: ${TwitchApi.lastError ?? "unknown"}',
+                    ),
+                  ),
                 );
                 widget.onClose();
               },
@@ -1908,7 +2542,9 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
                 final userId = widget.userId ?? _profile?['id'] as String?;
                 if (userId == null) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Cannot report: user ID unknown')),
+                    const SnackBar(
+                      content: Text('Cannot report: user ID unknown'),
+                    ),
                   );
                   return;
                 }
@@ -1933,8 +2569,14 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
                       ],
                     ),
                     actions: [
-                      TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-                      FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Report')),
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('Cancel'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('Report'),
+                      ),
                     ],
                   ),
                 );
@@ -1948,7 +2590,13 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
                 );
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(ok ? 'Report submitted' : 'Report failed: ${TwitchApi.lastError ?? "unknown"}')),
+                  SnackBar(
+                    content: Text(
+                      ok
+                          ? 'Report submitted'
+                          : 'Report failed: ${TwitchApi.lastError ?? "unknown"}',
+                    ),
+                  ),
                 );
                 widget.onClose();
               },
@@ -1993,7 +2641,9 @@ class _MessageInput extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
                 color: theme.colorScheme.surfaceContainerHighest,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(8),
+                ),
               ),
               child: Row(
                 children: [
@@ -2012,8 +2662,12 @@ class _MessageInput extends StatelessWidget {
                             ),
                           ),
                           TextSpan(
-                            text: ': ${replyToMsg!.text.length > 60 ? '${replyToMsg!.text.substring(0, 60)}…' : replyToMsg!.text}',
-                            style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+                            text:
+                                ': ${replyToMsg!.text.length > 60 ? '${replyToMsg!.text.substring(0, 60)}…' : replyToMsg!.text}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
                           ),
                         ],
                       ),
@@ -2057,5 +2711,3 @@ class _MessageInput extends StatelessWidget {
     );
   }
 }
-
-

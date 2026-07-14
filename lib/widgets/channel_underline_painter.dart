@@ -30,8 +30,9 @@ class ChannelUnderlinePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (itemPositions.isEmpty || itemWidths.isEmpty) return;
 
-    final scrollOffset =
-        scrollController.hasClients ? scrollController.offset : 0.0;
+    final scrollOffset = scrollController.hasClients
+        ? scrollController.offset
+        : 0.0;
 
     double contentX;
     double w;
@@ -39,9 +40,9 @@ class ChannelUnderlinePainter extends CustomPainter {
     if (underlineAnimation != null &&
         animStartContentX != null &&
         animEndContentX != null) {
-      contentX = animStartContentX! +
-          (animEndContentX! - animStartContentX!) *
-              underlineAnimation!.value;
+      contentX =
+          animStartContentX! +
+          (animEndContentX! - animStartContentX!) * underlineAnimation!.value;
       if (selectedIndex >= 0 && selectedIndex < itemWidths.length) {
         w = itemWidths[selectedIndex];
       } else {
@@ -56,9 +57,11 @@ class ChannelUnderlinePainter extends CustomPainter {
       final floorIdx = page.floor().clamp(0, itemPositions.length - 1);
       final ceilIdx = page.ceil().clamp(0, itemPositions.length - 1);
       final fraction = (page - floorIdx).clamp(0.0, 1.0);
-      contentX = itemPositions[floorIdx] +
+      contentX =
+          itemPositions[floorIdx] +
           (itemPositions[ceilIdx] - itemPositions[floorIdx]) * fraction;
-      w = itemWidths[floorIdx] +
+      w =
+          itemWidths[floorIdx] +
           (itemWidths[ceilIdx] - itemWidths[floorIdx]) * fraction;
     } else {
       if (selectedIndex < 0 || selectedIndex >= itemPositions.length) return;

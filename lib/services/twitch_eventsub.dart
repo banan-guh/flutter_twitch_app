@@ -16,18 +16,44 @@ class EventSubService {
   bool _reconnecting = false;
   final _channelUserIds = <String, String>{};
 
-  final _messageController = StreamController<TwitchMessage>.broadcast(sync: true);
-  final _statusController = StreamController<EventSubStatus>.broadcast(sync: true);
-  final _deleteController = StreamController<({String messageId, String targetUser, String channel})>.broadcast(sync: true);
-  final _banController = StreamController<({String user, String? reason, bool isTimeout, String? duration, String channel})>.broadcast(sync: true);
+  final _messageController = StreamController<TwitchMessage>.broadcast(
+    sync: true,
+  );
+  final _statusController = StreamController<EventSubStatus>.broadcast(
+    sync: true,
+  );
+  final _deleteController =
+      StreamController<
+        ({String messageId, String targetUser, String channel})
+      >.broadcast(sync: true);
+  final _banController =
+      StreamController<
+        ({
+          String user,
+          String? reason,
+          bool isTimeout,
+          String? duration,
+          String channel,
+        })
+      >.broadcast(sync: true);
 
   bool get isConnected => _channel != null;
   String? get sessionId => _sessionId;
 
   Stream<TwitchMessage> get onMessage => _messageController.stream;
   Stream<EventSubStatus> get onStatus => _statusController.stream;
-  Stream<({String messageId, String targetUser, String channel})> get onMessageDeleted => _deleteController.stream;
-  Stream<({String user, String? reason, bool isTimeout, String? duration, String channel})> get onBan => _banController.stream;
+  Stream<({String messageId, String targetUser, String channel})>
+  get onMessageDeleted => _deleteController.stream;
+  Stream<
+    ({
+      String user,
+      String? reason,
+      bool isTimeout,
+      String? duration,
+      String channel,
+    })
+  >
+  get onBan => _banController.stream;
 
   void setChannelMapping(String broadcasterUserId, String channelName) {
     _channelUserIds[broadcasterUserId] = channelName;
@@ -159,10 +185,17 @@ class EventSubService {
     final color = event['color'] as String?;
     final messageId = event['message_id'] as String?;
 
+    // EventSub wraps /me messages in \x01ACTION ... \x01
+    bool isAction = false;
+    String displayText = text;
+    if (displayText.startsWith('\x01ACTION ') && displayText.endsWith('\x01')) {
+      isAction = true;
+      displayText = displayText.substring(8, displayText.length - 1);
+    }
+
     String? replyParentId;
     String? replyUser;
     String? replyText;
-    String displayText = text;
     final reply = event['reply'] as Map<String, dynamic>?;
     if (reply != null) {
       replyParentId = reply['parent_message_id'] as String?;
@@ -170,23 +203,61 @@ class EventSubService {
       replyText = reply['parent_message_body'] as String?;
       if (replyUser != null) {
         final prefix = '@$replyUser ';
-        if (displayText.startsWith(RegExp('^${RegExp.escape(prefix)}', caseSensitive: false))) {
+        if (displayText.startsWith(
+          RegExp('^${RegExp.escape(prefix)}', caseSensitive: false),
+        )) {
           displayText = displayText.substring(prefix.length);
         }
       }
     }
 
-    _messageController.add(TwitchMessage(
-      username: chatter,
-      text: displayText,
-      color: color,
-      messageId: messageId,
-      channel: channel,
-      replyToParentId: replyParentId,
-      replyToUser: replyUser,
-      replyToText: replyText,
-      userId: chatterId,
-    ));
+    // Parse emote fragments from EventSub
+    final fragments = messageData?['fragments'] as List<dynamic>?;
+    List<EmotePosition>? emotePositions;
+    if (fragments != null) {
+      emotePositions = [];
+      for (final frag in fragments) {
+        final fragMap = frag as Map<String, dynamic>;
+        if (fragMap['type'] == 'emote') {
+          final emoteId =
+              (fragMap['emote'] as Map<String, dynamic>?)?['id'] as String?;
+          if (emoteId != null) {
+            final emoteText = fragMap['text'] as String? ?? '';
+            int searchStart = 0;
+            while (true) {
+              final idx = displayText.indexOf(emoteText, searchStart);
+              if (idx == -1) break;
+              emotePositions.add(
+                EmotePosition(
+                  emoteId: emoteId,
+                  startIndex: idx,
+                  endIndex: idx + emoteText.length,
+                  emoteCode: emoteText,
+                ),
+              );
+              searchStart = idx + emoteText.length;
+            }
+          }
+        }
+      }
+      if (emotePositions.isEmpty) emotePositions = null;
+    }
+
+    _messageController.add(
+      TwitchMessage(
+        username: chatter,
+        text: displayText,
+        color: color,
+        isAction: isAction,
+        messageId: messageId,
+        channel: channel,
+        replyToParentId: replyParentId,
+        replyToUser: replyUser,
+        replyToText: replyText,
+        userId: chatterId,
+        emotePositions: emotePositions,
+      ),
+    );
   }
 
   void _onMessageDeleted(Map<String, dynamic> msg) {
@@ -196,7 +267,11 @@ class EventSubService {
     final messageId = event['message_id'] as String?;
     final targetUser = event['target_user_name'] as String? ?? 'unknown';
     if (messageId != null) {
-      _deleteController.add((messageId: messageId, targetUser: targetUser, channel: channel));
+      _deleteController.add((
+        messageId: messageId,
+        targetUser: targetUser,
+        channel: channel,
+      ));
     }
   }
 

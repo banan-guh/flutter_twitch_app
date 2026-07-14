@@ -8,7 +8,7 @@ See [TODO.md](TODO.md) for the feature roadmap.
 
 ```
 flutter run                # launch on connected device/emulator
-flutter test               # run all tests (149 total)
+flutter test               # run all tests (176 total)
 flutter analyze            # static analysis (uses package:flutter_lints)
 dart format .              # format all Dart files
 ```
@@ -33,22 +33,30 @@ dart format .              # format all Dart files
 
 ### test/
 
-- `test/widget_test.dart` — 37 tests: main screen renders, channel bar, reply threads (9), system messages (7), settings screen (7), connected/disconnected dedup, join channel dialog
-- `test/twitch_eventsub_test.dart` — 20 tests: EventSub routing for all message types (channel.chat.message, channel.channel_points_custom_reward_redemption.add, channel.ban, channel.message_delete, channel.subscribe, channel.subscription.gift, channel.subscription.message, channel.cheer, channel.raid, channel.chat.user_message_hold)
-- `test/twitch_api_test.dart` — 15 tests: Helix API calls (getUser, createEventSubSubscription, deleteEventSubSubscription, getEventSubSubscriptions, sendChatMessage) with MockClient
-- `test/twitch_irc_test.dart` — 9 tests: IRC message parsing (PRIVMSG, CLEARCHAT with/without duration, NOTICE, JOIN, PART, PING, WHO)
-- `test/recent_messages_test.dart` — 9 tests: Robotty IRC line parsing (TwitchMessage creation, ban/timeout, highlights)
-- `test/home_screen_test.dart` — 8 tests: channel subscription, tab switching, message display, thread navigation
-- `test/twitch_auth_test.dart` — 6 tests: credential persistence and accessors
-- `test/twitch_message_test.dart` — 3 tests: model creation and reply threading
-- `test/twitch_config_test.dart` — 2 tests: client ID constant
-- `test/color_utils_test.dart` — 21 tests: color picking, luminance, contrast, ensureContrast
+#### test/unit/
+- `color_utils_test.dart` — 21 tests: color picking, luminance, contrast, ensureContrast
+- `emote_manager_test.dart` — emote manager state, GenericEmote creation, relativeScale/aspectRatio JSON round-trip
+- `emote_text_test.dart` — text parsing with emotes, segment building, whole-token matching, zero-width overlays
+- `twitch_auth_test.dart` — 6 tests: credential persistence and accessors
+- `twitch_config_test.dart` — 2 tests: client ID constant
+- `twitch_message_test.dart` — 3 tests: model creation and reply threading
+
+#### test/data/
+- `twitch_eventsub_test.dart` — 20 tests: EventSub routing for all message types (channel.chat.message, channel.channel_points_custom_reward_redemption.add, channel.ban, channel.message_delete, channel.subscribe, channel.subscription.gift, channel.subscription.message, channel.cheer, channel.raid, channel.chat.user_message_hold)
+- `twitch_api_test.dart` — 15 tests: Helix API calls (getUser, createEventSubSubscription, deleteEventSubSubscription, getEventSubSubscriptions, sendChatMessage) with MockClient
+- `twitch_irc_test.dart` — 9 tests: IRC message parsing (PRIVMSG, CLEARCHAT with/without duration, NOTICE, JOIN, PART, PING, WHO)
+- `recent_messages_test.dart` — 9 tests: Robotty IRC line parsing (TwitchMessage creation, ban/timeout, highlights)
+
+#### test/widgets/
+- `widget_test.dart` — 40 tests: main screen renders, channel bar, reply threads (10), system messages (7), settings screen (7), connected/disconnected dedup, join channel dialog, message cutoff (3)
+- `channel_bar_test.dart` — channel bar rendering, selection, underline painting, font weight, disappearance
+- `home_screen_test.dart` — 8 tests: channel subscription, tab switching, message display, thread navigation
 
 ## Test naming convention
 
-- Widget tests in `test/widget_test.dart`
-- Unit tests for each service/model file named `test/<file_name>_test.dart`
-- Integration/high-level tests in `test/home_screen_test.dart`
+- Widget tests in `test/widgets/widget_test.dart`
+- Unit tests for each service/model file named `test/unit/<file_name>_test.dart`
+- Integration/high-level tests in `test/widgets/home_screen_test.dart`
 
 ## Setup
 
