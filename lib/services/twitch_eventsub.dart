@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import '../models/twitch_badge.dart';
 import '../models/twitch_message.dart';
 
 class EventSubService {
@@ -184,6 +185,8 @@ class EventSubService {
     final text = messageData?['text'] as String? ?? '';
     final color = event['color'] as String?;
     final messageId = event['message_id'] as String?;
+    final sourceId = event['source_broadcaster_user_id'] as String?;
+    final sourceName = event['source_broadcaster_user_name'] as String?;
 
     // EventSub wraps /me messages in \x01ACTION ... \x01
     bool isAction = false;
@@ -209,6 +212,22 @@ class EventSubService {
           displayText = displayText.substring(prefix.length);
         }
       }
+    }
+
+    // Parse badges from EventSub
+    List<MessageBadge>? badges;
+    final badgeList = event['badges'] as List<dynamic>?;
+    if (badgeList != null && badgeList.isNotEmpty) {
+      badges = [];
+      for (final b in badgeList) {
+        final bMap = b as Map<String, dynamic>;
+        final setId = bMap['set_id'] as String?;
+        final id = bMap['id'] as String?;
+        if (setId != null && id != null) {
+          badges.add(MessageBadge(setId: setId, versionId: id));
+        }
+      }
+      if (badges.isEmpty) badges = null;
     }
 
     // Parse emote fragments from EventSub
@@ -256,6 +275,9 @@ class EventSubService {
         replyToText: replyText,
         userId: chatterId,
         emotePositions: emotePositions,
+        badges: badges,
+        sourceBroadcasterId: sourceId,
+        sourceBroadcasterName: sourceName,
       ),
     );
   }

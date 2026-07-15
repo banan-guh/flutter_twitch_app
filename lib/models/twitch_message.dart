@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'twitch_badge.dart';
 
 class EmotePosition {
   final String emoteId;
@@ -31,6 +32,9 @@ class TwitchMessage {
   bool isHighlighted;
   String? userId;
   final List<EmotePosition>? emotePositions;
+  final List<MessageBadge>? badges;
+  final String? sourceBroadcasterId;
+  final String? sourceBroadcasterName;
   bool pending;
   bool failed;
   bool unconfirmed;
@@ -54,6 +58,9 @@ class TwitchMessage {
     this.isHighlighted = false,
     this.userId,
     this.emotePositions,
+    this.badges,
+    this.sourceBroadcasterId,
+    this.sourceBroadcasterName,
     this.pending = false,
     this.failed = false,
     this.unconfirmed = false,

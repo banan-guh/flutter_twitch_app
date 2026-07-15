@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import '../models/twitch_badge.dart';
 import '../models/twitch_message.dart';
 import '../color_utils.dart';
 
@@ -125,6 +126,29 @@ class RecentMessagesService {
       if (emotePositions.isEmpty) emotePositions = null;
     }
 
+    // Parse source-room-id for shared chat
+    final sourceRoomId = tags['source-room-id'];
+    final sourceBroadcasterId = (sourceRoomId != null && sourceRoomId.isNotEmpty)
+        ? sourceRoomId
+        : null;
+
+    // Parse badges from IRC tags
+    List<MessageBadge>? badges;
+    final badgesTag = tags['badges'];
+    if (badgesTag != null && badgesTag.isNotEmpty) {
+      badges = [];
+      for (final entry in badgesTag.split(',')) {
+        final slashIdx = entry.indexOf('/');
+        if (slashIdx == -1) continue;
+        final setId = entry.substring(0, slashIdx);
+        final versionId = entry.substring(slashIdx + 1);
+        if (setId.isNotEmpty && versionId.isNotEmpty) {
+          badges.add(MessageBadge(setId: setId, versionId: versionId));
+        }
+      }
+      if (badges.isEmpty) badges = null;
+    }
+
     if (username.isEmpty && displayText.isEmpty) return null;
 
     final ts = tsMs != null
@@ -148,6 +172,8 @@ class RecentMessagesService {
       replyToUser: replyUser,
       replyToText: replyText,
       emotePositions: emotePositions,
+      badges: badges,
+      sourceBroadcasterId: sourceBroadcasterId,
     );
   }
 

@@ -11,10 +11,12 @@ import '../services/twitch_eventsub.dart';
 import '../services/twitch_irc.dart';
 import '../services/recent_messages.dart';
 import '../services/emote_manager.dart';
+import '../services/twitch_badge_service.dart';
 import '../widgets/settings.dart';
 import '../widgets/channel_underline_painter.dart';
 import '../widgets/emote_text.dart';
 import '../widgets/chat_message_tile.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../color_utils.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -48,6 +50,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   final _focusNode = FocusNode();
 
   final _emoteManager = EmoteManager();
+  final _badgeService = TwitchBadgeService();
   final _channels = <String>[];
   final _channelNotifier = ValueNotifier<List<String>>([]);
   final _channelScrollController = ScrollController();
@@ -127,6 +130,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _emoteManager.accessToken = widget.twitchAuth.accessToken;
     _emoteManager.preloadGlobalEmotes();
     _emoteManager.addListener(_onEmotesChanged);
+    _badgeService.fetchGlobalBadges(widget.twitchAuth);
     widget.twitchAuth.addListener(_onAuthChanged);
   }
 
@@ -134,7 +138,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (mounted) setState(() {});
   }
 
-  void _onAuthChanged() {
+  void     _onAuthChanged() {
     _emoteManager.accessToken = widget.twitchAuth.accessToken;
     _refreshEmotesAfterAuth();
   }
@@ -149,9 +153,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       }
       _emoteManager.evictGlobal();
       _emoteManager.preloadGlobalEmotes();
+      _badgeService.dispose();
+      _badgeService.fetchGlobalBadges(widget.twitchAuth);
       for (final channel in _channels) {
         _emoteManager.evictChannel(channel);
         _emoteManager.resolveEmotes(channel, _channelUserIds[channel]);
+        final userId = _channelUserIds[channel];
+        if (userId != null) {
+          _badgeService.fetchChannelBadges(
+            widget.twitchAuth,
+            userId,
+            channel,
+          );
+        }
       }
     } catch (e) {
       debugPrint('_refreshEmotesAfterAuth failed: $e');
@@ -363,6 +377,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (!mounted) return;
     final channel = msg.channel;
     if (channel == null) return;
+
+    if (msg.sourceBroadcasterId != null &&
+        _badgeService.resolveChannelAvatar(msg.sourceBroadcasterId!) == null) {
+      _badgeService.fetchChannelAvatar(
+        widget.twitchAuth,
+        msg.sourceBroadcasterId!,
+      );
+    }
 
     final login = _currentUserLogin?.toLowerCase();
 
@@ -723,6 +745,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       final channelUserId = await TwitchApi.getUserId(auth, channelName);
       if (channelUserId == null) return;
       _channelUserIds[channelName] = channelUserId;
+      _badgeService.fetchChannelBadges(auth, channelUserId, channelName);
 
       if (_currentUserLogin == null) {
         final currentUser = await TwitchApi.getCurrentUser(auth);
@@ -1439,6 +1462,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         onRetry: msg.failed ? () => _retrySend(msg) : null,
                         children: [
                           if (msg.isAction) ...[
+                            ..._buildBadgeSpans(
+                              msg.channel ?? '',
+                              msg,
+                            ),
                             TextSpan(
                               text: '${msg.username} ',
                               style: TextStyle(
@@ -1457,6 +1484,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                               colored: true,
                             ),
                           ] else ...[
+                            ..._buildBadgeSpans(
+                              msg.channel ?? '',
+                              msg,
+                            ),
                             TextSpan(
                               text: '${msg.username}: ',
                               style: TextStyle(
@@ -1591,6 +1622,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         onRetry: msg.failed ? () => _retrySend(msg) : null,
                         children: [
                           if (msg.isAction) ...[
+                            ..._buildBadgeSpans(
+                              msg.channel ?? '',
+                              msg,
+                            ),
                             TextSpan(
                               text: '${msg.username} ',
                               style: TextStyle(
@@ -1609,6 +1644,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                               colored: true,
                             ),
                           ] else ...[
+                            ..._buildBadgeSpans(
+                              msg.channel ?? '',
+                              msg,
+                            ),
                             TextSpan(
                               text: '${msg.username}: ',
                               style: TextStyle(
@@ -2182,6 +2221,84 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return emoteSpans;
   }
 
+  List<WidgetSpan> _buildBadgeSpans(String channel, TwitchMessage msg) {
+    const badgeSize = 18.0;
+    final spans = <WidgetSpan>[];
+
+    // Shared chat source badge (circular avatar, prepended)
+    if (msg.sourceBroadcasterId != null) {
+      final avatarUrl = _badgeService.resolveChannelAvatar(
+        msg.sourceBroadcasterId!,
+      );
+      if (avatarUrl != null) {
+        spans.add(
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 2),
+              child: ClipOval(
+                child: CachedNetworkImage(
+                  imageUrl: avatarUrl,
+                  width: badgeSize,
+                  height: badgeSize,
+                  fit: BoxFit.cover,
+                  fadeInDuration: Duration.zero,
+                  placeholder: (_, _) => SizedBox(
+                    width: badgeSize,
+                    height: badgeSize,
+                  ),
+                  errorWidget: (_, url, error) {
+                    debugPrint(
+                      'Shared chat badge image failed: $url — $error',
+                    );
+                    return SizedBox(width: badgeSize, height: badgeSize);
+                  },
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+    }
+
+    // Standard badges
+    final badges = msg.badges;
+    if (badges != null) {
+      for (final badge in badges) {
+        final url = _badgeService.resolveBadgeUrl(
+          channel,
+          badge.setId,
+          badge.versionId,
+        );
+        if (url == null) continue;
+        spans.add(
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 2),
+              child: CachedNetworkImage(
+                imageUrl: url,
+                width: badgeSize,
+                height: badgeSize,
+                fit: BoxFit.contain,
+                fadeInDuration: Duration.zero,
+                placeholder: (_, _) => SizedBox(
+                  width: badgeSize,
+                  height: badgeSize,
+                ),
+                errorWidget: (_, url, error) {
+                  debugPrint('Badge image load failed: $url — $error');
+                  return SizedBox(width: badgeSize, height: badgeSize);
+                },
+              ),
+            ),
+          ),
+        );
+      }
+    }
+    return spans;
+  }
+
   Widget _buildChat(String channel) {
     final msgs = _messages(channel);
     final surface = Theme.of(context).colorScheme.surface;
@@ -2230,6 +2347,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               bodyColor: msg.bodyColor,
               onRetry: msg.failed ? () => _retrySend(msg) : null,
               children: [
+                ..._buildBadgeSpans(channel, msg),
                 TextSpan(
                   text: msg.isAction ? '${msg.username} ' : '${msg.username}: ',
                   style: TextStyle(
