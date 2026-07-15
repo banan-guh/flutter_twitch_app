@@ -123,7 +123,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       final opened = await launchUrl(
         Uri.parse(url),
-        mode: LaunchMode.externalApplication,
+        mode: LaunchMode.inAppWebView,
       );
       if (!opened) {
         setState(

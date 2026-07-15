@@ -1624,17 +1624,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final channel = _channels[index];
     if (_selectedChannel == channel) return;
 
-    double? startContentX;
-    if (_underway && _animStartContentX != null && _animEndContentX != null) {
-      startContentX =
-          _animStartContentX! +
-          (_animEndContentX! - _animStartContentX!) * _underlineCurve.value;
-    } else if (_selectedChannel != null && _itemPositions.isNotEmpty) {
-      final prevIdx = _channels.indexOf(_selectedChannel!);
-      if (prevIdx >= 0 && prevIdx < _itemPositions.length) {
-        startContentX = _itemPositions[prevIdx];
-      }
-    }
+    final prevChannel = _selectedChannel;
+    final wasUnderway = _underway &&
+        _animStartContentX != null &&
+        _animEndContentX != null;
 
     setState(() {
       _selectedChannel = channel;
@@ -1643,23 +1636,47 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     });
     _panelAnimController.stop();
 
-    if (startContentX != null && index < _itemPositions.length) {
-      final endContentX = _itemPositions[index];
-      final distance = (endContentX - startContentX).abs();
-      if (distance > 0.5) {
-        _animStartContentX = startContentX;
-        _animEndContentX = endContentX;
-        _underway = true;
-        final duration = (200 + distance * 0.3).clamp(150, 300).toInt();
-        _underlineAnimController.duration = Duration(milliseconds: duration);
-        _underlineAnimController.forward(from: 0).then((_) {
-          _underway = false;
-          _animStartContentX = null;
-          _animEndContentX = null;
-          if (mounted) setState(() {});
-        });
+    // Wait for layout to settle after setState (tab text widths may have
+    // changed due to selected/unread style). Cache fresh positions so the
+    // underline animation targets the correct pixel coordinates.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _selectedChannel != channel) return;
+      _cachePositions();
+
+      double? startX;
+      if (prevChannel != null) {
+        final prevIdx = _channels.indexOf(prevChannel);
+        if (prevIdx >= 0 && prevIdx < _itemPositions.length) {
+          startX = _itemPositions[prevIdx];
+        }
       }
-    }
+      if (startX == null && wasUnderway) {
+        startX = (_animEndContentX ?? 0);
+      }
+      if (startX == null && _itemPositions.isNotEmpty) {
+        startX = 0;
+      }
+
+      if (startX != null && index < _itemPositions.length) {
+        final endX = _itemPositions[index];
+        final distance = (endX - startX).abs();
+        if (distance > 0.5) {
+          _animStartContentX = startX;
+          _animEndContentX = endX;
+          _underway = true;
+          final duration =
+              (200 + distance * 0.3).clamp(150, 300).toInt();
+          _underlineAnimController.duration =
+              Duration(milliseconds: duration);
+          _underlineAnimController.forward(from: 0).then((_) {
+            _underway = false;
+            _animStartContentX = null;
+            _animEndContentX = null;
+            if (mounted) setState(() {});
+          });
+        }
+      }
+    });
 
     if (animatePageView) {
       _programmaticPageChange = true;
@@ -1933,29 +1950,39 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                   ),
                                 ),
                               ),
-                              Expanded(
-                                child: NotificationListener<ScrollNotification>(
-                                  onNotification: _onPageScrollNotification,
-                                  child: PageView.builder(
-                                    controller: _pageController,
-                                    itemCount: _channels.length,
-                                    onPageChanged: (i) {
-                                      if (_programmaticPageChange) return;
-                                      setState(() {
-                                        _selectedChannel = _channels[i];
-                                        _openThreadRoot = null;
-                                        _showingMentions = false;
-                                        _channelsWithUnread.remove(
-                                          _channels[i],
-                                        );
-                                      });
-                                      _requestScrollToChannel(i);
-                                    },
-                                    itemBuilder: (_, i) =>
-                                        _buildChat(_channels[i]),
+                                Expanded(
+                                  child: ScrollConfiguration(
+                                    behavior: ScrollConfiguration.of(context).copyWith(
+                                      dragDevices: {
+                                        PointerDeviceKind.touch,
+                                        PointerDeviceKind.mouse,
+                                        PointerDeviceKind.stylus,
+                                        PointerDeviceKind.unknown,
+                                      },
+                                    ),
+                                    child: NotificationListener<ScrollNotification>(
+                                      onNotification: _onPageScrollNotification,
+                                      child: PageView.builder(
+                                        controller: _pageController,
+                                        itemCount: _channels.length,
+                                        onPageChanged: (i) {
+                                          if (_programmaticPageChange) return;
+                                          setState(() {
+                                            _selectedChannel = _channels[i];
+                                            _openThreadRoot = null;
+                                            _showingMentions = false;
+                                            _channelsWithUnread.remove(
+                                              _channels[i],
+                                            );
+                                          });
+                                          _requestScrollToChannel(i);
+                                        },
+                                        itemBuilder: (_, i) =>
+                                            _buildChat(_channels[i]),
+                                      ),
+                                    ),
                                   ),
                                 ),
-                              ),
                             ],
                           ),
                           if (_openThreadRoot != null)

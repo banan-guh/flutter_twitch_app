@@ -1,12 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
+import 'package:app_links/app_links.dart';
+import 'package:flutter/foundation.dart';
 import '../twitch_config.dart';
 
 class TwitchOAuth {
   static const _authorizeUrl = 'https://id.twitch.tv/oauth2/authorize';
-  static const _localPort = 17563;
 
   static String? lastError;
   static bool _flowInProgress = false;
@@ -31,16 +31,7 @@ class TwitchOAuth {
       return null;
     }
 
-    late final HttpServer server;
-    try {
-      server = await HttpServer.bind('127.0.0.1', _localPort);
-    } catch (e) {
-      lastError = 'Failed to start local server: $e';
-      _flowInProgress = false;
-      return null;
-    }
-
-    final redirectUri = 'http://localhost:$_localPort/';
+    final redirectUri = TwitchConfig.redirectUri;
 
     final state = _randomState();
     final authUrl =
@@ -55,17 +46,16 @@ class TwitchOAuth {
     onReady(authUrl);
 
     try {
-      return await _listen(server, state).timeout(const Duration(minutes: 5));
+      return await _listenForRedirect(state)
+          .timeout(const Duration(minutes: 5));
     } on TimeoutException {
+      lastError = 'Authorization timed out.';
       return null;
     } catch (e) {
       lastError = 'Authorization failed: $e';
       return null;
     } finally {
       _flowInProgress = false;
-      try {
-        await server.close();
-      } catch (_) {}
     }
   }
 
@@ -75,77 +65,57 @@ class TwitchOAuth {
     return base64Url.encode(bytes).replaceAll('=', '');
   }
 
-  static Future<String?> _listen(
-    HttpServer server,
-    String expectedState,
-  ) async {
-    await for (final request in server) {
-      if (request.uri.path == '/token') {
-        final token = request.uri.queryParameters['access_token'];
-        final state = request.uri.queryParameters['state'];
-        await _respond(request, 200, 'OK');
+  static Future<String?> _listenForRedirect(String expectedState) async {
+    final appLinks = AppLinks();
+    final completer = Completer<String?>();
+    StreamSubscription<Uri>? sub;
 
-        if (token != null) {
-          if (state != expectedState) {
-            lastError = 'CSRF: state mismatch';
-            return null;
-          }
-          return token;
-        }
-        lastError = 'No token in callback';
-        return null;
+    sub = appLinks.uriLinkStream.listen((Uri uri) {
+      if (uri.scheme != 'fluttertwitchapp' || uri.host != 'oauth-callback') {
+        return;
       }
 
-      final error = request.uri.queryParameters['error'];
+      final params = parseCallbackUri(uri);
+      final token = params['access_token'];
+      final state = params['state'];
+      final error = params['error'];
+
       if (error != null) {
-        request.response.headers.contentType = ContentType.html;
-        request.response.write(
-          '<h2>Authorization denied.</h2><p>$error</p><p>You can close this tab.</p>',
-        );
-        await request.response.close();
         lastError = 'Twitch returned: $error';
-        return null;
+        if (!completer.isCompleted) completer.complete(null);
+        return;
       }
 
-      request.response.headers.contentType = ContentType.html;
-      request.response.write(_redirectPage);
-      await request.response.close();
+      if (token != null) {
+        if (state != expectedState) {
+          lastError = 'CSRF: state mismatch';
+          if (!completer.isCompleted) completer.complete(null);
+          return;
+        }
+        if (!completer.isCompleted) completer.complete(token);
+      }
+    });
+
+    try {
+      return await completer.future;
+    } finally {
+      sub.cancel();
     }
-    return null;
   }
 
-  static Future<void> _respond(
-    HttpRequest request,
-    int status,
-    String body,
-  ) async {
-    request.response.statusCode = status;
-    request.response.write(body);
-    await request.response.close();
-  }
+  @visibleForTesting
+  static Map<String, String?> parseCallbackUri(Uri uri) {
+    final params = <String, String?>{};
 
-  static const _redirectPage = '''
-<!DOCTYPE html>
-<html>
-<body>
-<script>
-var hash = window.location.hash.substring(1);
-var params = new URLSearchParams(hash);
-var token = params.get('access_token');
-var error = params.get('error');
-var state = params.get('state');
-if (token && state) {
-  fetch('/token?access_token=' + encodeURIComponent(token) + '&state=' + encodeURIComponent(state));
-  document.body.innerHTML = '<h2>Authorized!</h2><p>You can close this tab.</p>';
-} else if (error) {
-  document.body.innerHTML = '<h2>Authorization denied: ' + error + '</h2><p>You can close this tab.</p>';
-  fetch('/token');
-} else {
-  document.body.innerHTML = '<h2>Waiting for authorization...</h2>';
-  fetch('/token');
-}
-</script>
-</body>
-</html>
-''';
+    if (uri.fragment.isNotEmpty) {
+      final fragmentParams = Uri.splitQueryString(uri.fragment);
+      params.addAll(fragmentParams);
+    }
+
+    if (uri.query.isNotEmpty) {
+      params.addAll(uri.queryParameters);
+    }
+
+    return params;
+  }
 }
