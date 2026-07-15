@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/generic_emote.dart';
 import 'emote_providers/twitch_emotes.dart';
@@ -28,6 +29,7 @@ class EmoteManager extends ChangeNotifier {
   final _channelCaches = <String, ChannelEmotes>{};
   final _channelFetchTimes = <String, DateTime>{};
   final _lastErrors = <String, String>{};
+  final _channelTwitchEmotes = <String, List<GenericEmote>>{};
   String? _accessToken;
 
   set accessToken(String? value) => _accessToken = value;
@@ -45,6 +47,96 @@ class EmoteManager extends ChangeNotifier {
     final suggestions = merged.values.toList()
       ..sort((a, b) => a.code.compareTo(b.code));
     return ChannelEmotes(byCode: merged, suggestions: suggestions);
+  }
+
+  List<String> get joinedChannels =>
+      _channelCaches.keys.toList()..sort();
+
+  List<GenericEmote> globalEmotes() =>
+      _globalCache?.suggestions ?? [];
+
+  List<GenericEmote> channelNonTwitchEmotes(String channel) {
+    final cached = _channelCaches[channel];
+    if (cached == null) return [];
+    return cached.suggestions
+        .where((e) => e.type != EmoteType.twitch)
+        .toList()
+      ..sort((a, b) => a.code.compareTo(b.code));
+  }
+
+  Map<String, List<GenericEmote>> subscriberEmotesByChannel() {
+    final result = <String, List<GenericEmote>>{};
+    final keys = _channelCaches.keys.toList()..sort();
+    for (final channel in keys) {
+      final raw = _channelTwitchEmotes[channel];
+      if (raw == null) continue;
+      final subs = raw.where((e) => e.tier != null).toList()
+        ..sort((a, b) => a.code.compareTo(b.code));
+      if (subs.isNotEmpty) result[channel] = subs;
+    }
+    return result;
+  }
+
+  static const _recentKey = 'recent_emotes';
+  static const _maxRecent = 100;
+  List<String> _recentIds = [];
+  bool _recentLoaded = false;
+
+  Future<void> _ensureRecentLoaded() async {
+    if (_recentLoaded) return;
+    _recentLoaded = true;
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_recentKey);
+    if (raw == null) return;
+    try {
+      _recentIds = (jsonDecode(raw) as List<dynamic>).cast<String>();
+    } catch (_) {}
+  }
+
+  Future<void> _saveRecent() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_recentKey, jsonEncode(_recentIds));
+  }
+
+  /// Resolve an emote by ID across all caches.
+  GenericEmote? _emoteById(String id) {
+    if (_globalCache != null) {
+      for (final e in _globalCache!.suggestions) {
+        if (e.id == id) return e;
+      }
+    }
+    for (final cached in _channelCaches.values) {
+      for (final e in cached.suggestions) {
+        if (e.id == id) return e;
+      }
+    }
+    for (final raw in _channelTwitchEmotes.values) {
+      for (final e in raw) {
+        if (e.id == id) return e;
+      }
+    }
+    return null;
+  }
+
+  Future<void> markEmoteUsed(GenericEmote emote) async {
+    await _ensureRecentLoaded();
+    _recentIds.remove(emote.id);
+    _recentIds.insert(0, emote.id);
+    if (_recentIds.length > _maxRecent) {
+      _recentIds = _recentIds.sublist(0, _maxRecent);
+    }
+    await _saveRecent();
+    notifyListeners();
+  }
+
+  Future<List<GenericEmote>> recentEmotes() async {
+    await _ensureRecentLoaded();
+    final result = <GenericEmote>[];
+    for (final id in _recentIds) {
+      final emote = _emoteById(id);
+      if (emote != null) result.add(emote);
+    }
+    return result;
   }
 
   Future<void> preloadGlobalEmotes() async {
@@ -72,7 +164,10 @@ class EmoteManager extends ChangeNotifier {
       _channelFetchTimes[channel] = DateTime.now();
       notifyListeners();
     }
-    final emotes = await _fetchAllChannel(broadcasterId);
+    final emotes = await _fetchAllChannel(broadcasterId, channelName: channel);
+    _channelTwitchEmotes[channel] = emotes
+        .where((e) => e.type == EmoteType.twitch)
+        .toList();
     final map = _buildChannelMap(emotes);
     _channelCaches[channel] = map;
     _channelFetchTimes[channel] = DateTime.now();
@@ -83,14 +178,12 @@ class EmoteManager extends ChangeNotifier {
   void evictChannel(String channel) {
     _channelCaches.remove(channel);
     _channelFetchTimes.remove(channel);
+    _channelTwitchEmotes.remove(channel);
   }
 
   void evictGlobal() {
     _globalCache = null;
   }
-
-  // TODO: persist recently-used emote IDs so boost survives app restarts
-  // Same SharedPreferences pattern as the emote cache — small, easy addition later
 
   ChannelEmotes _buildChannelMap(List<GenericEmote> emotes) {
     // Scope precedence (channel > global) applied before provider precedence.
@@ -138,7 +231,7 @@ class EmoteManager extends ChangeNotifier {
     return all;
   }
 
-  Future<List<GenericEmote>> _fetchAllChannel(String? broadcasterId) async {
+  Future<List<GenericEmote>> _fetchAllChannel(String? broadcasterId, {String? channelName}) async {
     if (broadcasterId == null) return [];
     final all = <GenericEmote>[];
     await _fetchProvider(
@@ -146,6 +239,7 @@ class EmoteManager extends ChangeNotifier {
       () => TwitchEmoteProvider.fetchChannel(
         broadcasterId,
         accessToken: _accessToken,
+        channelName: channelName,
       ),
       all,
     );
@@ -219,6 +313,50 @@ class EmoteManager extends ChangeNotifier {
         'emotes': nonTwitch.map((e) => e.toJson()).toList(),
       };
       await prefs.setString(key, jsonEncode(data));
+    } catch (_) {}
+  }
+
+  // ── Pre-cache queue for seen emotes ──────────────────────────────────
+
+  final Set<String> _seenEmoteIds = {};
+  final _precacheQueue = <GenericEmote>[];
+  bool _isProcessingPrecache = false;
+  static const _maxConcurrentPrecache = 5;
+
+  void enqueueSeenEmotes(List<GenericEmote> emotes) {
+    final fresh = <GenericEmote>[];
+    for (final e in emotes) {
+      if (_seenEmoteIds.add(e.id)) {
+        fresh.add(e);
+      }
+    }
+    if (fresh.isEmpty) return;
+    _precacheQueue.addAll(fresh);
+    if (!_isProcessingPrecache) {
+      _processPrecacheQueue();
+    }
+  }
+
+  void _processPrecacheQueue() {
+    _isProcessingPrecache = true;
+    _stepPrecache();
+  }
+
+  void _stepPrecache() {
+    if (_precacheQueue.isEmpty) {
+      _isProcessingPrecache = false;
+      return;
+    }
+    final batch =
+        _precacheQueue.take(_maxConcurrentPrecache).toList();
+    _precacheQueue.removeRange(0, batch.length);
+    Future.wait(batch.map(_precacheEmote), eagerError: false)
+        .then((_) => _stepPrecache());
+  }
+
+  Future<void> _precacheEmote(GenericEmote emote) async {
+    try {
+      await DefaultCacheManager().getSingleFile(emote.url);
     } catch (_) {}
   }
 }

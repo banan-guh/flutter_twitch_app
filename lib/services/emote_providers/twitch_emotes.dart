@@ -23,6 +23,7 @@ class TwitchEmoteProvider {
   static Future<List<GenericEmote>> fetchChannel(
     String broadcasterId, {
     String? accessToken,
+    String? channelName,
   }) async {
     final uri = Uri.parse(
       'https://api.twitch.tv/helix/chat/emotes?broadcaster_id=$broadcasterId',
@@ -38,12 +39,13 @@ class TwitchEmoteProvider {
     debugPrint('Twitch channel body: ${res.body}');
     if (res.statusCode != 200) return [];
     final data = jsonDecode(res.body) as Map<String, dynamic>;
-    return _parseEmotes(data['data'] as List<dynamic>? ?? [], channel: true);
+    return _parseEmotes(data['data'] as List<dynamic>? ?? [], channel: true, channelName: channelName);
   }
 
   static List<GenericEmote> _parseEmotes(
     List<dynamic> items, {
     bool channel = false,
+    String? channelName,
   }) {
     final emotes = <GenericEmote>[];
     for (final item in items) {
@@ -55,6 +57,7 @@ class TwitchEmoteProvider {
           (item['images'] as Map<String, dynamic>?)?['url_2x'] as String? ??
           (item['images'] as Map<String, dynamic>?)?['url_1x'] as String?;
       if (format == null) continue;
+      final tier = item['tier'] as String?;
       emotes.add(
         GenericEmote(
           id: id,
@@ -62,6 +65,8 @@ class TwitchEmoteProvider {
           type: EmoteType.twitch,
           url: format,
           scope: channel ? EmoteScope.channel : EmoteScope.global,
+          tier: tier,
+          ownerChannel: channel ? channelName : null,
         ),
       );
     }

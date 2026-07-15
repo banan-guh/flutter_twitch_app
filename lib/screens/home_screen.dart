@@ -13,11 +13,14 @@ import '../services/recent_messages.dart';
 import '../services/emote_manager.dart';
 import '../services/twitch_badge_service.dart';
 import '../widgets/settings.dart';
-import '../widgets/channel_underline_painter.dart';
 import '../widgets/emote_text.dart';
 import '../widgets/chat_message_tile.dart';
+import '../widgets/slide_panel.dart';
+import '../widgets/tabbed_layout.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../color_utils.dart';
+
+enum OverlayPanel { closed, thread, mentions, emotes }
 
 class HomeScreen extends StatefulWidget {
   final TwitchAuth twitchAuth;
@@ -52,9 +55,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   final _emoteManager = EmoteManager();
   final _badgeService = TwitchBadgeService();
   final _channels = <String>[];
+  final _tabLayoutKey = GlobalKey<TabbedLayoutState>();
   final _channelNotifier = ValueNotifier<List<String>>([]);
-  final _channelScrollController = ScrollController();
-  final _pageController = PageController();
   String? _selectedChannel;
   final _channelMessages = <String, List<TwitchMessage>>{};
   final _scrollControllers = <String, ScrollController>{};
@@ -62,30 +64,22 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   final _messageKeys = <String, GlobalKey>{};
   final _chatStatus = <String, String>{};
   final _channelUserIds = <String, String>{};
-  final _channelItemKeys = <String, GlobalKey>{};
-  final _underlineKey = GlobalKey();
-  List<double> _itemPositions = [];
-  List<double> _itemWidths = [];
-  int _scrollRequestId = 0;
-  bool _programmaticPageChange = false;
   int _unreadMentions = 0;
   final _channelsWithUnread = <String>{};
 
   TwitchMessage? _replyToMsg;
   TwitchMessage? _openThreadRoot;
-  bool _showingMentions = false;
+  OverlayPanel _activePanel = OverlayPanel.closed;
+  int _emoteTabIndex = 0;
+  final _emoteTabLayoutKey = GlobalKey<TabbedLayoutState>();
+  List<GenericEmote> _cachedRecentEmotes = [];
+  bool _recentEmotesLoaded = false;
   int _maxMessagesPerChannel = 200;
   double _uiScale = 1.0;
 
   int _tempIdCounter = 0;
   final _pendingByMessageId = <String, String>{};
   final _pendingTimers = <String, Timer>{};
-
-  late final AnimationController _underlineAnimController;
-  late final CurvedAnimation _underlineCurve;
-  double? _animStartContentX;
-  double? _animEndContentX;
-  bool _underway = false;
 
   late final AnimationController _panelAnimController;
   late final CurvedAnimation _panelCurve;
@@ -108,14 +102,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
-    _underlineAnimController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 250),
-    );
-    _underlineCurve = CurvedAnimation(
-      parent: _underlineAnimController,
-      curve: Curves.easeInOut,
-    );
     _panelAnimController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 250),
@@ -132,6 +118,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _emoteManager.addListener(_onEmotesChanged);
     _badgeService.fetchGlobalBadges(widget.twitchAuth);
     widget.twitchAuth.addListener(_onAuthChanged);
+    _focusNode.addListener(_onInputFocusChanged);
+  }
+
+  void _onInputFocusChanged() {
+    if (_activePanel == OverlayPanel.emotes && _focusNode.hasFocus) {
+      _closePanel();
+    }
   }
 
   void _onEmotesChanged() {
@@ -189,57 +182,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     });
   }
 
-  void _cachePositions() {
-    _itemPositions = [];
-    _itemWidths = [];
-    double x = 0;
-    for (final channel in _channels) {
-      _itemPositions.add(x);
-      final key = _channelItemKeys[channel];
-      double w = 0;
-      if (key?.currentContext != null) {
-        w =
-            (key!.currentContext!.findRenderObject() as RenderBox?)
-                ?.size
-                .width ??
-            0;
-      }
-      _itemWidths.add(w);
-      x += w;
-    }
-  }
-
-  double _lastDragPage = -1;
-  bool _onPageScrollNotification(ScrollNotification notification) {
-    if (_programmaticPageChange) return false;
-    if (notification is! ScrollUpdateNotification) return false;
-    if (_itemPositions.isEmpty) return false;
-    if (!_channelScrollController.hasClients) return false;
-
-    final metrics = notification.metrics;
-    final page = metrics.pixels / metrics.viewportDimension;
-    if ((page - _lastDragPage).abs() < 0.001) return false;
-    _lastDragPage = page;
-
-    final floorIdx = page.floor().clamp(0, _channels.length - 1);
-    final ceilIdx = page.ceil().clamp(0, _channels.length - 1);
-    final fraction = (page - page.floor()).clamp(0.0, 1.0);
-
-    final viewportWidth = _channelScrollController.position.viewportDimension;
-    final scrollA =
-        (_itemPositions[floorIdx] -
-                viewportWidth / 2 +
-                _itemWidths[floorIdx] / 2)
-            .clamp(0.0, _channelScrollController.position.maxScrollExtent);
-    final scrollB =
-        (_itemPositions[ceilIdx] - viewportWidth / 2 + _itemWidths[ceilIdx] / 2)
-            .clamp(0.0, _channelScrollController.position.maxScrollExtent);
-    final targetScroll = scrollA + (scrollB - scrollA) * fraction;
-    _channelScrollController.jumpTo(targetScroll);
-
-    return false;
-  }
-
   @override
   void dispose() {
     _messageSub?.cancel();
@@ -255,16 +197,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _emoteManager.removeListener(_onEmotesChanged);
     widget.twitchAuth.removeListener(_onAuthChanged);
     _messageController.dispose();
+    _focusNode.removeListener(_onInputFocusChanged);
     _focusNode.dispose();
     _ircBanSub?.cancel();
     _ircNoticeSub?.cancel();
     _ircJtvSub?.cancel();
-    _underlineCurve.dispose();
-    _underlineAnimController.dispose();
     _panelCurve.dispose();
     _panelAnimController.dispose();
-    _channelScrollController.dispose();
-    _pageController.dispose();
     for (final c in _scrollControllers.values) {
       c.dispose();
     }
@@ -456,6 +395,26 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _channelMessages[_mentionsChannel]!.insert(0, msg);
       }
     });
+    _precacheMessageEmotes(msg, channel);
+  }
+
+  void _precacheMessageEmotes(TwitchMessage msg, String channel) {
+    if (msg.isSystem || msg.isHistory) return;
+    final channelEmotes = _emoteManager.byCode(channel);
+    if (channelEmotes == null) return;
+    final found = <GenericEmote>[];
+    final seen = <String>{};
+    for (final word in msg.text.split(RegExp(r'\s+'))) {
+      if (seen.contains(word)) continue;
+      final emote = channelEmotes.byCode[word];
+      if (emote != null) {
+        found.add(emote);
+        seen.add(word);
+      }
+    }
+    if (found.isNotEmpty) {
+      _emoteManager.enqueueSeenEmotes(found);
+    }
   }
 
   bool _isMention(TwitchMessage msg, String login) {
@@ -613,13 +572,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _selectedChannel = name;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _cachePositions();
       if (mounted) setState(() {});
       final idx = _channels.indexOf(name);
-      if (_pageController.hasClients) {
-        _pageController.jumpToPage(idx);
-      }
-      _requestScrollToChannel(idx);
+      _tabLayoutKey.currentState?.jumpToPage(idx);
     });
 
     _focusNode.requestFocus();
@@ -859,21 +814,20 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       }
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _cachePositions();
       if (mounted) setState(() {});
-      if (_selectedChannel != null && _pageController.hasClients) {
-        _pageController.jumpToPage(_channels.indexOf(_selectedChannel!));
+      if (_selectedChannel != null) {
+        _tabLayoutKey.currentState?.jumpToPage(
+          _channels.indexOf(_selectedChannel!),
+        );
       }
-      _requestScrollToChannel(
-        _selectedChannel != null ? _channels.indexOf(_selectedChannel!) : 0,
-      );
     });
   }
 
   void _sendMessage() {
     final text = _messageController.text.trim();
     final channel = _selectedChannel;
-    if (text.isEmpty || channel == null || _showingMentions) return;
+    if (text.isEmpty || channel == null ||
+        _activePanel == OverlayPanel.mentions) return;
 
     if (!widget.twitchAuth.isConfigured) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1291,10 +1245,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (channel == null) return;
     if (_selectedChannel != channel) {
       final idx = _channels.indexOf(channel);
-      if (idx >= 0) _selectChannel(idx);
+      if (idx >= 0) _onChannelChanged(idx);
     }
     setState(() {
-      _showingMentions = false;
+      _activePanel = OverlayPanel.thread;
       _openThreadRoot = rootMsg;
     });
     _panelAnimController.forward(from: 0);
@@ -1302,18 +1256,47 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   void _showMentionsView() {
     setState(() {
+      _activePanel = OverlayPanel.mentions;
       _openThreadRoot = null;
-      _showingMentions = true;
     });
     _panelAnimController.forward(from: 0);
+  }
+
+  void _showEmoteMenu() {
+    _focusNode.unfocus();
+    _loadRecentEmotes();
+    setState(() => _activePanel = OverlayPanel.emotes);
+    _panelAnimController.forward(from: 0);
+  }
+
+  Future<void> _loadRecentEmotes() async {
+    final recent = await _emoteManager.recentEmotes();
+    if (mounted) {
+      setState(() {
+        _cachedRecentEmotes = recent;
+        _recentEmotesLoaded = true;
+      });
+    }
+  }
+
+  void _onEmoteSelected(GenericEmote emote) {
+    final text = _messageController.text;
+    final pos = _messageController.selection.baseOffset;
+    final insertPos = pos.clamp(0, text.length);
+    _messageController.text =
+        '${text.substring(0, insertPos)}${emote.code} ${text.substring(insertPos)}';
+    _messageController.selection = TextSelection.collapsed(
+      offset: insertPos + emote.code.length + 1,
+    );
+    _emoteManager.markEmoteUsed(emote);
   }
 
   void _closePanel() {
     _panelAnimController.reverse().then((_) {
       if (mounted) {
         setState(() {
+          _activePanel = OverlayPanel.closed;
           _openThreadRoot = null;
-          _showingMentions = false;
         });
       }
     });
@@ -1675,6 +1658,151 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
+  Widget _buildEmoteMenu() {
+    final theme = Theme.of(context);
+    return Container(
+      clipBehavior: Clip.hardEdge,
+      decoration: BoxDecoration(
+        color: theme.scaffoldBackgroundColor,
+        border: Border(top: BorderSide(color: theme.dividerColor)),
+      ),
+      child: Column(
+        children: [
+          Center(
+            child: Container(
+              margin: const EdgeInsets.only(top: 8, bottom: 4),
+              width: 32,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[400],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          Expanded(
+            child: TabbedLayout(
+              key: _emoteTabLayoutKey,
+              tabAlignment: Alignment.center,
+              tabs: const ['Recent', 'Subs', 'Channel', 'Global'],
+              selectedIndex: _emoteTabIndex,
+              onSelectedIndexChanged: (i) => setState(() => _emoteTabIndex = i),
+              pageBuilder: (_, i) => _buildEmoteTabPage(i),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmoteTabPage(int tabIndex) {
+    switch (tabIndex) {
+      case 0:
+        return _buildEmoteRecentGrid();
+      case 1:
+        return _buildEmoteSubsGrid();
+      case 2:
+        return _buildEmoteChannelGrid();
+      case 3:
+        return _buildEmoteGlobalGrid();
+      default:
+        return const SizedBox();
+    }
+  }
+
+  Widget _buildEmoteRecentGrid() {
+    if (!_recentEmotesLoaded) {
+      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+    }
+    if (_cachedRecentEmotes.isEmpty) {
+      return const Center(child: Text('No recently used emotes'));
+    }
+    return _buildEmoteGrid(_cachedRecentEmotes);
+  }
+
+  Widget _buildEmoteSubsGrid() {
+    final byChannel = _emoteManager.subscriberEmotesByChannel();
+    if (byChannel.isEmpty) {
+      return const Center(child: Text('No subscriber emotes available'));
+    }
+    return CustomScrollView(
+      slivers: [
+        for (final entry in byChannel.entries) ...[
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.only(left: 8, top: 8, right: 8),
+              child: Text(
+                entry.key,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+          ),
+          SliverGrid(
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 5,
+              mainAxisSpacing: 2,
+              crossAxisSpacing: 2,
+              childAspectRatio: 1,
+            ),
+            delegate: SliverChildBuilderDelegate(
+              (_, i) => _buildEmoteGridItem(entry.value[i]),
+              childCount: entry.value.length,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildEmoteChannelGrid() {
+    final channel = _selectedChannel ?? '';
+    final emotes = _emoteManager.channelNonTwitchEmotes(channel);
+    if (emotes.isEmpty) {
+      return const Center(child: Text('No channel emotes'));
+    }
+    return _buildEmoteGrid(emotes);
+  }
+
+  Widget _buildEmoteGlobalGrid() {
+    final emotes = _emoteManager.globalEmotes();
+    if (emotes.isEmpty) {
+      return const Center(child: Text('No global emotes'));
+    }
+    return _buildEmoteGrid(emotes);
+  }
+
+  Widget _buildEmoteGrid(List<GenericEmote> emotes) {
+    return GridView.builder(
+      padding: const EdgeInsets.all(4),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 5,
+        mainAxisSpacing: 2,
+        crossAxisSpacing: 2,
+        childAspectRatio: 1,
+      ),
+      itemCount: emotes.length,
+      itemBuilder: (_, i) => _buildEmoteGridItem(emotes[i]),
+    );
+  }
+
+  Widget _buildEmoteGridItem(GenericEmote emote) {
+    return Material(
+      type: MaterialType.transparency,
+      clipBehavior: Clip.hardEdge,
+      child: InkWell(
+        onTap: () => _onEmoteSelected(emote),
+        child: CachedNetworkImage(
+          imageUrl: emote.url,
+          fit: BoxFit.contain,
+          placeholder: (_, _) => const SizedBox(),
+          errorWidget: (_, _, _) => const Icon(Icons.broken_image, size: 20),
+        ),
+      ),
+    );
+  }
+
   void _showUserProfile(String username, String? userId) {
     showModalBottomSheet(
       context: context,
@@ -1703,105 +1831,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  void _selectChannel(int index, {bool animatePageView = true}) {
+  void _onChannelChanged(int index) {
     final channel = _channels[index];
     if (_selectedChannel == channel) return;
-
-    final prevChannel = _selectedChannel;
-    final wasUnderway =
-        _underway && _animStartContentX != null && _animEndContentX != null;
-
     setState(() {
       _selectedChannel = channel;
+      _activePanel = OverlayPanel.closed;
       _openThreadRoot = null;
-      _showingMentions = false;
+      _emoteTabIndex = 0;
     });
     _panelAnimController.stop();
-
-    // Wait for layout to settle after setState (tab text widths may have
-    // changed due to selected/unread style). Cache fresh positions so the
-    // underline animation targets the correct pixel coordinates.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _selectedChannel != channel) return;
-      _cachePositions();
-
-      double? startX;
-      if (prevChannel != null) {
-        final prevIdx = _channels.indexOf(prevChannel);
-        if (prevIdx >= 0 && prevIdx < _itemPositions.length) {
-          startX = _itemPositions[prevIdx];
-        }
-      }
-      if (startX == null && wasUnderway) {
-        startX = (_animEndContentX ?? 0);
-      }
-      if (startX == null && _itemPositions.isNotEmpty) {
-        startX = 0;
-      }
-
-      if (startX != null && index < _itemPositions.length) {
-        final endX = _itemPositions[index];
-        final distance = (endX - startX).abs();
-        if (distance > 0.5) {
-          _animStartContentX = startX;
-          _animEndContentX = endX;
-          _underway = true;
-          final duration = (200 + distance * 0.3).clamp(150, 300).toInt();
-          _underlineAnimController.duration = Duration(milliseconds: duration);
-          _underlineAnimController.forward(from: 0).then((_) {
-            _underway = false;
-            _animStartContentX = null;
-            _animEndContentX = null;
-            if (mounted) setState(() {});
-          });
-        }
-      }
-    });
-
-    if (animatePageView) {
-      _programmaticPageChange = true;
-      _pageController
-          .animateToPage(
-            index,
-            duration: const Duration(milliseconds: 250),
-            curve: Curves.easeInOut,
-          )
-          .whenComplete(() {
-            _programmaticPageChange = false;
-            _channelsWithUnread.remove(channel);
-          });
-    }
-    _requestScrollToChannel(index);
-  }
-
-  void _requestScrollToChannel(int index, {bool animate = true}) {
-    final requestId = ++_scrollRequestId;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (requestId != _scrollRequestId) return;
-      if (!_channelScrollController.hasClients ||
-          index < 0 ||
-          index >= _channels.length) {
-        return;
-      }
-      final viewportWidth = _channelScrollController.position.viewportDimension;
-      final targetScroll =
-          _itemPositions[index] -
-          (viewportWidth / 2) +
-          (_itemWidths[index] / 2);
-      final clamped = targetScroll.clamp(
-        0.0,
-        _channelScrollController.position.maxScrollExtent,
-      );
-      if (animate) {
-        _channelScrollController.animateTo(
-          clamped,
-          duration: const Duration(milliseconds: 250),
-          curve: Curves.easeInOut,
-        );
-      } else {
-        _channelScrollController.jumpTo(clamped);
-      }
-    });
   }
 
   List<TwitchMessage> _messages(String channel) {
@@ -1841,7 +1880,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final dividerColor = theme.dividerColor;
 
     return MediaQuery(
       data: MediaQuery.of(
@@ -1873,7 +1911,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       onPressed: () {
                         _unreadMentions = 0;
                         if (mounted) setState(() {});
-                        if (_showingMentions) {
+                        if (_activePanel == OverlayPanel.mentions) {
                           _closePanel();
                         } else {
                           _showMentionsView();
@@ -1904,216 +1942,58 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         return Stack(
                           clipBehavior: Clip.hardEdge,
                           children: [
-                            Column(
-                              children: [
-                                Container(
-                                  decoration: BoxDecoration(
-                                    border: Border(
-                                      bottom: BorderSide(color: dividerColor),
-                                    ),
-                                  ),
-                                  child: SizedBox(
-                                    height: 40,
-                                    child: Stack(
-                                      children: [
-                                        Align(
-                                          alignment: Alignment.centerLeft,
-                                          child: ScrollbarTheme(
-                                            data: const ScrollbarThemeData(
-                                              thickness: WidgetStatePropertyAll(
-                                                0,
-                                              ),
-                                            ),
-                                            child: SingleChildScrollView(
-                                              scrollDirection: Axis.horizontal,
-                                              controller:
-                                                  _channelScrollController,
-                                              physics:
-                                                  const ClampingScrollPhysics(),
-                                              child: Row(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: _channels.map((
-                                                  channel,
-                                                ) {
-                                                  final selected =
-                                                      channel ==
-                                                      _selectedChannel;
-                                                  return GestureDetector(
-                                                    behavior: HitTestBehavior
-                                                        .translucent,
-                                                    onTap: () => _selectChannel(
-                                                      _channels.indexOf(
-                                                        channel,
-                                                      ),
-                                                    ),
-                                                    child: Container(
-                                                      key: _channelItemKeys
-                                                          .putIfAbsent(
-                                                            channel,
-                                                            () => GlobalKey(),
-                                                          ),
-                                                      padding:
-                                                          const EdgeInsets.symmetric(
-                                                            horizontal: 12,
-                                                          ),
-                                                      height: 40,
-                                                      alignment:
-                                                          Alignment.center,
-                                                      child: Text(
-                                                        channel,
-                                                        style: TextStyle(
-                                                          fontSize: 14,
-                                                          fontWeight: selected
-                                                              ? FontWeight.w600
-                                                              : _channelsWithUnread
-                                                                    .contains(
-                                                                      channel,
-                                                                    )
-                                                              ? FontWeight.w600
-                                                              : FontWeight
-                                                                    .normal,
-                                                          color: selected
-                                                              ? theme
-                                                                    .colorScheme
-                                                                    .primary
-                                                              : _channelsWithUnread
-                                                                    .contains(
-                                                                      channel,
-                                                                    )
-                                                              ? Colors.white
-                                                              : null,
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  );
-                                                }).toList(),
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                        Positioned.fill(
-                                          child: IgnorePointer(
-                                            child: CustomPaint(
-                                              key: _underlineKey,
-                                              painter: ChannelUnderlinePainter(
-                                                scrollController:
-                                                    _channelScrollController,
-                                                pageController: _pageController,
-                                                itemPositions: _itemPositions,
-                                                itemWidths: _itemWidths,
-                                                selectedIndex:
-                                                    _selectedChannel == null
-                                                    ? -1
-                                                    : _channels.indexOf(
-                                                        _selectedChannel!,
-                                                      ),
-                                                color:
-                                                    theme.colorScheme.primary,
-                                                underlineAnimation: _underway
-                                                    ? _underlineCurve
-                                                    : null,
-                                                animStartContentX: _underway
-                                                    ? _animStartContentX
-                                                    : null,
-                                                animEndContentX: _underway
-                                                    ? _animEndContentX
-                                                    : null,
-                                                repaint: _underway
-                                                    ? Listenable.merge([
-                                                        _channelScrollController,
-                                                        _pageController,
-                                                        _underlineCurve,
-                                                      ])
-                                                    : Listenable.merge([
-                                                        _channelScrollController,
-                                                        _pageController,
-                                                      ]),
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                                Expanded(
-                                  child: ScrollConfiguration(
-                                    behavior: ScrollConfiguration.of(context)
-                                        .copyWith(
-                                          dragDevices: {
-                                            PointerDeviceKind.touch,
-                                            PointerDeviceKind.mouse,
-                                            PointerDeviceKind.stylus,
-                                            PointerDeviceKind.unknown,
-                                          },
-                                        ),
-                                    child:
-                                        NotificationListener<
-                                          ScrollNotification
-                                        >(
-                                          onNotification:
-                                              _onPageScrollNotification,
-                                          child: PageView.builder(
-                                            controller: _pageController,
-                                            itemCount: _channels.length,
-                                            onPageChanged: (i) {
-                                              if (_programmaticPageChange)
-                                                return;
-                                              setState(() {
-                                                _selectedChannel = _channels[i];
-                                                _openThreadRoot = null;
-                                                _showingMentions = false;
-                                                _channelsWithUnread.remove(
-                                                  _channels[i],
-                                                );
-                                              });
-                                              _requestScrollToChannel(i);
-                                            },
-                                            itemBuilder: (_, i) =>
-                                                _buildChat(_channels[i]),
-                                          ),
-                                        ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            if (_openThreadRoot != null)
-                              Positioned(
-                                left: 0,
-                                right: 0,
-                                top: 0,
-                                height: stackHeight,
-                                child: AnimatedBuilder(
-                                  animation: _panelCurve,
-                                  builder: (context, child) =>
-                                      Transform.translate(
-                                        offset: Offset(
-                                          0,
-                                          (1 - _panelCurve.value) * stackHeight,
-                                        ),
-                                        child: child,
-                                      ),
-                                  child: _buildThreadPanel(),
-                                ),
+                            TabbedLayout(
+                              key: _tabLayoutKey,
+                              tabs: _channels,
+                              selectedIndex: _channels.indexOf(
+                                _selectedChannel ?? '',
                               ),
-                            if (_showingMentions)
-                              Positioned(
-                                left: 0,
-                                right: 0,
-                                top: 0,
-                                height: stackHeight,
-                                child: AnimatedBuilder(
-                                  animation: _panelCurve,
-                                  builder: (context, child) =>
-                                      Transform.translate(
-                                        offset: Offset(
-                                          0,
-                                          (1 - _panelCurve.value) * stackHeight,
-                                        ),
-                                        child: child,
-                                      ),
-                                  child: _buildMentionsPanel(),
-                                ),
+                              onSelectedIndexChanged: _onChannelChanged,
+                              pageBuilder: (_, i) =>
+                                  _buildChat(_channels[i]),
+                              tabBuilder: (_, i) {
+                                final channel = _channels[i];
+                                final selected =
+                                    channel == _selectedChannel;
+                                return Text(
+                                  channel,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: selected ||
+                                            _channelsWithUnread.contains(
+                                              channel,
+                                            )
+                                        ? FontWeight.w600
+                                        : FontWeight.normal,
+                                    color: selected
+                                        ? theme.colorScheme.primary
+                                        : _channelsWithUnread.contains(
+                                                  channel,
+                                                )
+                                            ? Colors.white
+                                            : null,
+                                  ),
+                                );
+                              },
+                            ),
+                            if (_activePanel == OverlayPanel.thread)
+                              SlidePanel(
+                                animation: _panelCurve,
+                                stackHeight: stackHeight,
+                                child: _buildThreadPanel(),
+                              ),
+                            if (_activePanel == OverlayPanel.mentions)
+                              SlidePanel(
+                                animation: _panelCurve,
+                                stackHeight: stackHeight,
+                                child: _buildMentionsPanel(),
+                              ),
+                            if (_activePanel == OverlayPanel.emotes)
+                              SlidePanel(
+                                animation: _panelCurve,
+                                stackHeight: stackHeight,
+                                top: stackHeight / 2,
+                                child: _buildEmoteMenu(),
                               ),
                           ],
                         );
@@ -2131,15 +2011,23 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     focusNode: _focusNode,
                     onSend: _sendMessage,
                     onSendLongPress: _onSendLongPress,
+                    onEmoteToggle: () {
+                      if (_activePanel == OverlayPanel.emotes) {
+                        _closePanel();
+                      } else {
+                        _showEmoteMenu();
+                      }
+                    },
                     replyToMsg: _replyToMsg,
                     onCancelReply: () => setState(() => _replyToMsg = null),
                     enabled:
-                        !_showingMentions && widget.twitchAuth.isConfigured,
+                        _activePanel != OverlayPanel.mentions &&
+                            widget.twitchAuth.isConfigured,
                     hintText: !widget.twitchAuth.isConfigured
                         ? 'Connect an account to chat'
-                        : _openThreadRoot != null
+                        : _activePanel == OverlayPanel.thread
                         ? 'Reply to thread...'
-                        : _showingMentions
+                        : _activePanel == OverlayPanel.mentions
                         ? 'Type a message...'
                         : null,
                   ),
@@ -2887,6 +2775,7 @@ class _MessageInput extends StatelessWidget {
   final FocusNode focusNode;
   final VoidCallback onSend;
   final VoidCallback? onSendLongPress;
+  final VoidCallback? onEmoteToggle;
   final TwitchMessage? replyToMsg;
   final VoidCallback? onCancelReply;
   final bool enabled;
@@ -2897,6 +2786,7 @@ class _MessageInput extends StatelessWidget {
     required this.focusNode,
     required this.onSend,
     this.onSendLongPress,
+    this.onEmoteToggle,
     this.replyToMsg,
     this.onCancelReply,
     this.enabled = true,
@@ -2975,7 +2865,7 @@ class _MessageInput extends StatelessWidget {
                   type: MaterialType.transparency,
                   child: InkWell(
                     borderRadius: BorderRadius.circular(24),
-                    onTap: () {},
+                    onTap: onEmoteToggle,
                     child: const Icon(Icons.emoji_emotions_outlined),
                   ),
                 ),

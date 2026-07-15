@@ -39,6 +39,7 @@ dependencies:
   url_launcher: ^6.3.0
   shared_preferences: ^2.3.0
   cached_network_image: ^3.4.1
+  flutter_cache_manager: ^3.4.1
   webview_flutter: ^4.10.0
 
 dev_dependencies:
