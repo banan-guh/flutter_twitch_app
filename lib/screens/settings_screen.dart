@@ -1,15 +1,13 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../models/twitch_message.dart';
 import '../services/twitch_auth.dart';
 import '../services/twitch_oauth.dart';
+import '../twitch_config.dart';
 import 'benchmark_screen.dart';
 
-typedef OAuthStarter =
-    Future<String?> Function({required void Function(String authUrl) onReady});
+typedef OAuthStarter = Future<String?> Function(BuildContext context);
 
 class SettingsScreen extends StatefulWidget {
   final TwitchAuth twitchAuth;
@@ -40,7 +38,6 @@ enum _AuthState { idle, waiting, success, error, needsSetup }
 class _SettingsScreenState extends State<SettingsScreen> {
   _AuthState _authState = _AuthState.idle;
   String? _authError;
-  String? _authUrl;
   int _maxMessagesPerChannel = 200;
   double _uiScale = 1.0;
 
@@ -86,54 +83,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _authState = _AuthState.waiting;
       _authError = null;
-      _authUrl = null;
     });
 
+    if (!TwitchConfig.isConfigured) {
+      setState(() => _authState = _AuthState.needsSetup);
+      return;
+    }
+
     final starter = widget.oAuthStarter ?? TwitchOAuth.startFlow;
-    final token = await starter(
-      onReady: (url) {
-        if (url.isEmpty) {
-          setState(() {
-            _authState = _AuthState.needsSetup;
-          });
-          return;
-        }
-        setState(() => _authUrl = url);
-        _tryOpenUrl(url);
-      },
-    );
+    final token = await starter(context);
 
     if (!mounted) return;
 
     if (token != null && token.isNotEmpty) {
       widget.twitchAuth.setCredentials(accessToken: token);
       setState(() => _authState = _AuthState.success);
-    } else if (_authState != _AuthState.needsSetup) {
+    } else {
       setState(() {
         _authState = _AuthState.error;
         _authError =
-            _authError ??
-            TwitchOAuth.lastError ??
-            'Authorization failed or timed out.';
+            TwitchOAuth.lastError ?? 'Authorization failed or timed out.';
       });
-    }
-  }
-
-  Future<void> _tryOpenUrl(String url) async {
-    try {
-      final opened = await launchUrl(
-        Uri.parse(url),
-        mode: LaunchMode.inAppWebView,
-      );
-      if (!opened) {
-        setState(
-          () => _authError = 'Could not open browser. Use the button below.',
-        );
-      }
-    } catch (_) {
-      setState(
-        () => _authError = 'Could not open browser. Use the button below.',
-      );
     }
   }
 
@@ -142,7 +112,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _authState = _AuthState.idle;
       _authError = null;
-      _authUrl = null;
     });
   }
 
@@ -353,37 +322,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (_authUrl != null) ...[
-                if (_authError != null)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Text(_authError!, textAlign: TextAlign.center),
-                  ),
-                SelectionArea(
-                  child: SelectableText(
-                    _authUrl!,
-                    style: const TextStyle(fontSize: 12),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                FilledButton.tonalIcon(
-                  onPressed: () {
-                    Clipboard.setData(ClipboardData(text: _authUrl!));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('URL copied!')),
-                    );
-                  },
-                  icon: const Icon(Icons.copy),
-                  label: const Text('Copy URL'),
-                ),
-                const SizedBox(height: 4),
-                TextButton.icon(
-                  onPressed: () => _tryOpenUrl(_authUrl!),
-                  icon: const Icon(Icons.open_in_browser),
-                  label: const Text('Open in Browser'),
-                ),
-              ],
+              const Text('Opening Twitch login...'),
               const SizedBox(height: 16),
               const CircularProgressIndicator(),
             ],
@@ -423,19 +362,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
               const SizedBox(height: 24),
-              if (_authUrl != null) ...[
-                FilledButton.tonalIcon(
-                  onPressed: () {
-                    Clipboard.setData(ClipboardData(text: _authUrl!));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('URL copied!')),
-                    );
-                  },
-                  icon: const Icon(Icons.copy),
-                  label: const Text('Copy URL'),
-                ),
-                const SizedBox(height: 8),
-              ],
               FilledButton.icon(
                 onPressed: _startOAuth,
                 icon: const Icon(Icons.refresh),

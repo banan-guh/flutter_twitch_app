@@ -1,5 +1,9 @@
 # TODO
 
+## Setup
+
+- [ ] **Register HTTPS redirect URI** — Go to https://dev.twitch.tv/console/apps and add the `redirectUri` from `lib/twitch_config.dart` to your app's "OAuth Redirect URLs". The URL is a placeholder (`https://example.com/twitch-callback`) and must be replaced with a real HTTPS URL you control (or you can keep the placeholder if you register `https://example.com/twitch-callback` in your Twitch console).
+
 ## High Priority
 
 - [x] **Switch to Send Chat Message API** — Replaced IRC-based message sending with `POST /helix/chat/messages`. Added `user:write:chat` scope. Commands like `/color`, `/ban`, `/timeout` now work again via dedicated API endpoints.
