@@ -77,12 +77,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   int _maxMessagesPerChannel = 200;
   double _uiScale = 1.0;
 
-  int _tempIdCounter = 0;
-  final _pendingByMessageId = <String, String>{};
-  final _pendingTimers = <String, Timer>{};
-
   late final AnimationController _panelAnimController;
-  late final CurvedAnimation _panelCurve;
 
   StreamSubscription<TwitchMessage>? _messageSub;
   StreamSubscription<EventSubStatus>? _statusSub;
@@ -106,10 +101,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       vsync: this,
       duration: const Duration(milliseconds: 250),
     );
-    _panelCurve = CurvedAnimation(
-      parent: _panelAnimController,
-      curve: Curves.easeOutCubic,
-    );
     _loadMaxMessages();
     _loadUiScale();
     _connect();
@@ -122,7 +113,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   void _onInputFocusChanged() {
-    if (_activePanel == OverlayPanel.emotes && _focusNode.hasFocus) {
+    if (_activePanel == OverlayPanel.emotes) {
       _closePanel();
     }
   }
@@ -190,10 +181,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _ircBanSub?.cancel();
     _eventSub.dispose();
     _irc.dispose();
-    for (final t in _pendingTimers.values) {
-      t.cancel();
-    }
-    _pendingTimers.clear();
     _emoteManager.removeListener(_onEmotesChanged);
     widget.twitchAuth.removeListener(_onAuthChanged);
     _messageController.dispose();
@@ -202,7 +189,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _ircBanSub?.cancel();
     _ircNoticeSub?.cancel();
     _ircJtvSub?.cancel();
-    _panelCurve.dispose();
     _panelAnimController.dispose();
     for (final c in _scrollControllers.values) {
       c.dispose();
@@ -339,38 +325,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             !msg.isHistory &&
             _isMention(msg, login)) ||
         isReplyToMe;
-
-    // Match pending entry by messageId — never by username+text.
-    if (msg.messageId != null &&
-        _pendingByMessageId.containsKey(msg.messageId)) {
-      final tempId = _pendingByMessageId.remove(msg.messageId!)!;
-      _pendingTimers.remove(tempId)?.cancel();
-      final msgs = _channelMessages[channel];
-      if (msgs != null) {
-        for (int i = 0; i < msgs.length; i++) {
-          if (msgs[i].tempId == tempId) {
-            setState(() {
-              msgs[i] = TwitchMessage(
-                username: msg.username,
-                text: msg.text,
-                color: msg.color,
-                timestamp: msg.timestamp,
-                messageId: msg.messageId,
-                channel: msg.channel,
-                replyToParentId: msg.replyToParentId,
-                replyToUser: msg.replyToUser,
-                replyToText: msg.replyToText,
-                userId: msg.userId,
-                emotePositions: msg.emotePositions,
-                isHighlighted: msg.isHighlighted || isMention,
-              );
-            });
-            return;
-          }
-        }
-      }
-      // Pending entry not found (e.g. cleared); fall through to normal insert.
-    }
 
     if (isMention) {
       if (!msg.isHighlighted) _unreadMentions++;
@@ -880,101 +834,26 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       return;
     }
 
-    // Insert pending message immediately.
-    final tempId = 'pending_${++_tempIdCounter}';
-    final pendingMsg = TwitchMessage(
-      username: userLogin,
-      text: text,
-      channel: channel,
-      tempId: tempId,
-      pending: true,
-      timestamp: DateTime.now(),
-      replyToParentId: reply?.messageId,
-      replyToUser: reply?.username,
-      replyToText: reply?.text,
-    );
-    if (!mounted) return;
-    setState(() {
-      _channelMessages.putIfAbsent(channel, () => []);
-      _channelMessages[channel]!.insert(0, pendingMsg);
-    });
-
+    // Try Helix API if available.
     if (_currentUserId != null && auth.isConfigured) {
-      final broadcasterId = _channelUserIds[channel];
+      final broadcasterId = _channelUserIds[channel] ??
+          await TwitchApi.getUserId(auth, channel);
       if (broadcasterId != null) {
         try {
-          final messageId = await TwitchApi.sendChatMessage(
+          await TwitchApi.sendChatMessage(
             auth,
             broadcasterId: broadcasterId,
             senderId: _currentUserId!,
             message: text,
             replyParentMessageId: reply?.messageId,
           );
-          if (!mounted) return;
-          if (messageId != null) {
-            _pendingByMessageId[messageId] = tempId;
-            _pendingTimers[tempId] = Timer(
-              const Duration(seconds: 8),
-              () => _markUnconfirmed(tempId),
-            );
-          } else {
-            _markFailed(tempId, TwitchApi.lastError ?? 'unknown error');
-          }
-        } catch (e) {
-          if (!mounted) return;
-          _markFailed(tempId, e.toString());
-        }
+        } catch (_) {}
         return;
       }
     }
 
-    // IRC fallback — no messageId to match, can't confirm. Transition to
-    // unconfirmed after a short delay so the user sees their message.
-    //
-    // BUG: This creates a pending entry with no resolution path. EventSub
-    // cannot match it (no _pendingByMessageId mapping), so it stays
-    // unconfirmed permanently. This is hit when auth is configured but
-    // _channelUserIds[channel] is null (e.g. _subscribeChannel failed
-    // silently). Fix: queue the message until broadcasterId resolves, or
-    // skip pending creation when Helix path isn't available.
+    // IRC fallback.
     _irc.sendMessage(channel, text, replyParentMessageId: reply?.messageId);
-    _pendingTimers[tempId] = Timer(
-      const Duration(seconds: 3),
-      () => _markUnconfirmed(tempId),
-    );
-  }
-
-  void _markFailed(String tempId, String error) {
-    for (final msgs in _channelMessages.values) {
-      for (final msg in msgs) {
-        if (msg.tempId == tempId && msg.pending) {
-          msg.pending = false;
-          msg.failed = true;
-          if (mounted) setState(() {});
-          return;
-        }
-      }
-    }
-  }
-
-  void _markUnconfirmed(String tempId) {
-    _pendingTimers.remove(tempId);
-    _pendingByMessageId.removeWhere((_, v) => v == tempId);
-    for (final msgs in _channelMessages.values) {
-      for (final msg in msgs) {
-        if (msg.tempId == tempId && msg.pending) {
-          msg.pending = false;
-          msg.unconfirmed = true;
-          if (mounted) setState(() {});
-          return;
-        }
-      }
-    }
-  }
-
-  void _retrySend(TwitchMessage failedMsg) {
-    if (failedMsg.channel == null) return;
-    _doSendMessage(failedMsg.text, failedMsg.channel!);
   }
 
   void _onSendLongPress() {
@@ -1263,7 +1142,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   void _showEmoteMenu() {
-    _focusNode.unfocus();
     _loadRecentEmotes();
     setState(() => _activePanel = OverlayPanel.emotes);
     _panelAnimController.forward(from: 0);
@@ -1426,11 +1304,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           children: [TextSpan(text: msg.text)],
                           timestampFontSize: 13,
                           bodyFontSize: 13,
-                          pending: msg.pending,
-                          failed: msg.failed,
-                          unconfirmed: msg.unconfirmed,
                           bodyColor: msg.bodyColor,
-                          onRetry: msg.failed ? () => _retrySend(msg) : null,
                         );
                       }
 
@@ -1438,11 +1312,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         timestamp: ts,
                         deleted: msg.deleted,
                         isHistory: msg.isHistory,
-                        pending: msg.pending,
-                        failed: msg.failed,
-                        unconfirmed: msg.unconfirmed,
                         bodyColor: msg.bodyColor,
-                        onRetry: msg.failed ? () => _retrySend(msg) : null,
                         children: [
                           if (msg.isAction) ...[
                             ..._buildBadgeSpans(
@@ -1586,11 +1456,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           children: [TextSpan(text: msg.text)],
                           timestampFontSize: 13,
                           bodyFontSize: 13,
-                          pending: msg.pending,
-                          failed: msg.failed,
-                          unconfirmed: msg.unconfirmed,
                           bodyColor: msg.bodyColor,
-                          onRetry: msg.failed ? () => _retrySend(msg) : null,
                         );
                       }
 
@@ -1598,11 +1464,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         timestamp: ts,
                         deleted: msg.deleted,
                         isHistory: msg.isHistory,
-                        pending: msg.pending,
-                        failed: msg.failed,
-                        unconfirmed: msg.unconfirmed,
                         bodyColor: msg.bodyColor,
-                        onRetry: msg.failed ? () => _retrySend(msg) : null,
                         children: [
                           if (msg.isAction) ...[
                             ..._buildBadgeSpans(
@@ -1661,21 +1523,50 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget _buildEmoteMenu() {
     final theme = Theme.of(context);
     return Container(
-      clipBehavior: Clip.hardEdge,
+      margin: const EdgeInsets.symmetric(horizontal: 4),
       decoration: BoxDecoration(
         color: theme.scaffoldBackgroundColor,
-        border: Border(top: BorderSide(color: theme.dividerColor)),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.15),
+            blurRadius: 8,
+            offset: const Offset(0, -2),
+          ),
+        ],
       ),
+      clipBehavior: Clip.hardEdge,
       child: Column(
         children: [
-          Center(
-            child: Container(
-              margin: const EdgeInsets.only(top: 8, bottom: 4),
-              width: 32,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[400],
-                borderRadius: BorderRadius.circular(2),
+          GestureDetector(
+            onVerticalDragUpdate: (details) {
+              final newValue =
+                  (_panelAnimController.value -
+                          details.primaryDelta! / context.size!.height)
+                      .clamp(0.0, 1.0);
+              _panelAnimController.value = newValue;
+            },
+            onVerticalDragEnd: (details) {
+              if (_panelAnimController.value < 0.5 ||
+                  (details.primaryVelocity ?? 0) < -200) {
+                _closePanel();
+              } else {
+                _panelAnimController.forward();
+              }
+            },
+            child: const Padding(
+              padding: EdgeInsets.only(top: 8, bottom: 8),
+              child: Center(
+                child: SizedBox(
+                  width: 32,
+                  height: 4,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Colors.grey,
+                      borderRadius: BorderRadius.all(Radius.circular(2)),
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
@@ -1978,21 +1869,21 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             ),
                             if (_activePanel == OverlayPanel.thread)
                               SlidePanel(
-                                animation: _panelCurve,
+                                animation: _panelAnimController,
                                 stackHeight: stackHeight,
                                 child: _buildThreadPanel(),
                               ),
                             if (_activePanel == OverlayPanel.mentions)
                               SlidePanel(
-                                animation: _panelCurve,
+                                animation: _panelAnimController,
                                 stackHeight: stackHeight,
                                 child: _buildMentionsPanel(),
                               ),
                             if (_activePanel == OverlayPanel.emotes)
                               SlidePanel(
-                                animation: _panelCurve,
+                                animation: _panelAnimController,
                                 stackHeight: stackHeight,
-                                top: stackHeight / 2,
+                                top: stackHeight * 0.6,
                                 child: _buildEmoteMenu(),
                               ),
                           ],
@@ -2229,11 +2120,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               timestamp: ts,
               deleted: msg.deleted,
               isHistory: msg.isHistory,
-              pending: msg.pending,
-              failed: msg.failed,
-              unconfirmed: msg.unconfirmed,
               bodyColor: msg.bodyColor,
-              onRetry: msg.failed ? () => _retrySend(msg) : null,
               children: [
                 ..._buildBadgeSpans(channel, msg),
                 TextSpan(

@@ -30,7 +30,7 @@ class _FakeEventSubService extends EventSubService {
       >.broadcast(sync: true);
 
   @override
-  Future<void> connect() async {}
+  Future<void> connect({String? url}) async {}
 
   @override
   Stream<EventSubStatus> get onStatus => _statusCtrl.stream;

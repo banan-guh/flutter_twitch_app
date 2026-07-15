@@ -35,10 +35,6 @@ class TwitchMessage {
   final List<MessageBadge>? badges;
   final String? sourceBroadcasterId;
   final String? sourceBroadcasterName;
-  bool pending;
-  bool failed;
-  bool unconfirmed;
-  String? tempId;
   Color get bodyColor =>
       isSystem ? Colors.grey : Colors.white.withValues(alpha: 0.87);
   TwitchMessage({
@@ -61,9 +57,5 @@ class TwitchMessage {
     this.badges,
     this.sourceBroadcasterId,
     this.sourceBroadcasterName,
-    this.pending = false,
-    this.failed = false,
-    this.unconfirmed = false,
-    this.tempId,
   }) : timestamp = timestamp ?? DateTime.now();
 }

@@ -75,10 +75,12 @@ class RecentMessagesService {
     String? replyText;
     String displayText = text;
     bool isAction = false;
+    int offset = 0;
     // IRC ACTION messages are wrapped in \x01ACTION ... \x01
     if (displayText.startsWith('\x01ACTION ') && displayText.endsWith('\x01')) {
       isAction = true;
       displayText = displayText.substring(8, displayText.length - 1);
+      offset += 8;
     }
     if (tags.containsKey('reply-parent-msg-id')) {
       replyParentId = tags['reply-parent-msg-id'];
@@ -92,6 +94,7 @@ class RecentMessagesService {
           RegExp('^${RegExp.escape(prefix)}', caseSensitive: false),
         )) {
           displayText = displayText.substring(prefix.length);
+          offset += prefix.length;
         }
       }
     }
@@ -111,13 +114,18 @@ class RecentMessagesService {
           final start = int.tryParse(posStr.substring(0, dashIdx));
           final end = int.tryParse(posStr.substring(dashIdx + 1));
           if (start == null || end == null) continue;
+          // IRC tag positions are relative to the original text. Adjust by
+          // offset (chars removed from the front) to match displayText.
+          final aStart = start - offset;
+          final aEnd = end - offset;
+          if (aStart < 0 || aEnd >= displayText.length) continue;
           // end is exclusive, but IRC tag uses inclusive end
-          final emoteCode = displayText.substring(start, end + 1);
+          final emoteCode = displayText.substring(aStart, aEnd + 1);
           emotePositions.add(
             EmotePosition(
               emoteId: emoteId,
-              startIndex: start,
-              endIndex: end + 1,
+              startIndex: aStart,
+              endIndex: aEnd + 1,
               emoteCode: emoteCode,
             ),
           );

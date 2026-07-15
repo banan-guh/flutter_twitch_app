@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -36,6 +37,7 @@ class IrcService {
   String? _token;
   bool _reconnecting = false;
   bool _disposed = false;
+  int _reconnectAttempt = 0;
 
   final _banController = StreamController<IrcBanEvent>.broadcast();
   final _noticeController = StreamController<IrcNoticeEvent>.broadcast();
@@ -87,6 +89,7 @@ class IrcService {
       for (final channel in _channels) {
         _send('JOIN #$channel');
       }
+      _reconnectAttempt = 0;
     } catch (e) {
       debugPrint('IRC connect error: $e');
       _scheduleReconnect();
@@ -105,7 +108,15 @@ class IrcService {
   void _scheduleReconnect() {
     if (_reconnecting || _disposed) return;
     _reconnecting = true;
-    Future.delayed(const Duration(seconds: 3), () {
+    _reconnectAttempt++;
+    final base = Duration(
+      seconds: min(pow(2, _reconnectAttempt - 1).toInt(), 30),
+    );
+    final jitter = 0.75 + Random().nextDouble() * 0.5;
+    final delay = Duration(
+      milliseconds: (base.inMilliseconds * jitter).toInt(),
+    );
+    Future.delayed(delay, () {
       _reconnecting = false;
       if (!_disposed && _username != null && _token != null) {
         _connect();

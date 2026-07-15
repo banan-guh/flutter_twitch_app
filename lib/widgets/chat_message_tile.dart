@@ -11,10 +11,6 @@ class ChatMessageTile extends StatelessWidget {
   final bool isHighlighted;
   final Widget? replyIndicator;
   final VoidCallback? onLongPress;
-  final bool pending;
-  final bool failed;
-  final bool unconfirmed;
-  final VoidCallback? onRetry;
   final Color bodyColor;
 
   const ChatMessageTile({
@@ -29,10 +25,6 @@ class ChatMessageTile extends StatelessWidget {
     this.isHighlighted = false,
     this.replyIndicator,
     this.onLongPress,
-    this.pending = false,
-    this.failed = false,
-    this.unconfirmed = false,
-    this.onRetry,
     this.bodyColor = Colors.red,
   });
 
@@ -109,53 +101,6 @@ class ChatMessageTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [replyIndicator!, child],
-      );
-    }
-
-    if (pending) {
-      child = Opacity(opacity: 0.4, child: child);
-    } else if (failed) {
-      child = Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            decoration: BoxDecoration(
-              border: Border(
-                left: BorderSide(color: Colors.red.shade300, width: 3),
-              ),
-            ),
-            child: child,
-          ),
-          Padding(
-            padding: const EdgeInsets.only(left: 12, bottom: 4, right: 12),
-            child: Row(
-              children: [
-                Icon(Icons.error_outline, size: 14, color: Colors.red.shade300),
-                const SizedBox(width: 4),
-                Text(
-                  'Failed to send',
-                  style: TextStyle(fontSize: 11, color: Colors.red.shade300),
-                ),
-                const Spacer(),
-                TextButton.icon(
-                  icon: const Icon(Icons.refresh, size: 14),
-                  label: const Text('Retry', style: TextStyle(fontSize: 11)),
-                  onPressed: onRetry,
-                ),
-              ],
-            ),
-          ),
-        ],
-      );
-    } else if (unconfirmed) {
-      child = Row(
-        children: [
-          Expanded(child: Opacity(opacity: 0.6, child: child)),
-          const Padding(
-            padding: EdgeInsets.only(right: 8),
-            child: Icon(Icons.check, size: 14, color: Colors.grey),
-          ),
-        ],
       );
     }
 

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/twitch_badge.dart';
@@ -15,6 +16,7 @@ class EventSubService {
   var _sessionCompleter = Completer<String?>();
   StreamSubscription<dynamic>? _streamSub;
   bool _reconnecting = false;
+  int _reconnectAttempt = 0;
   final _channelUserIds = <String, String>{};
 
   final _messageController = StreamController<TwitchMessage>.broadcast(
@@ -77,13 +79,14 @@ class EventSubService {
     return _sessionCompleter.future;
   }
 
-  Future<void> connect() async {
+  Future<void> connect({String? url}) async {
+    if (url != null) _reconnectAttempt = 0;
     disconnect(emitStatus: false);
     _sessionCompleter = Completer<String?>();
     _statusController.add(EventSubStatus.connecting);
 
     try {
-      _channel = WebSocketChannel.connect(Uri.parse(_wsUrl));
+      _channel = WebSocketChannel.connect(Uri.parse(url ?? _wsUrl));
       await _channel!.ready;
 
       _streamSub = _channel!.stream.listen(
@@ -114,7 +117,15 @@ class EventSubService {
   void _scheduleReconnect() {
     if (_reconnecting) return;
     _reconnecting = true;
-    Timer(const Duration(seconds: 1), () {
+    _reconnectAttempt++;
+    final base = Duration(
+      seconds: min(pow(2, _reconnectAttempt - 1).toInt(), 30),
+    );
+    final jitter = 0.75 + Random().nextDouble() * 0.5;
+    final delay = Duration(
+      milliseconds: (base.inMilliseconds * jitter).toInt(),
+    );
+    Timer(delay, () {
       _reconnecting = false;
       connect();
     });
@@ -146,7 +157,7 @@ class EventSubService {
             _onNotification(msg);
         }
       case 'session_reconnect':
-        debugPrint('EventSub reconnect requested (not implemented)');
+        _handleReconnect(msg);
       case 'revocation':
         debugPrint('EventSub subscription revoked');
     }
@@ -162,9 +173,24 @@ class EventSubService {
     _keepaliveTimeout = session['keepalive_timeout_seconds'] as int? ?? 10;
     _resetKeepalive();
     _statusController.add(EventSubStatus.connected);
+    _reconnectAttempt = 0;
   }
 
   void _onKeepalive() {}
+
+  void _handleReconnect(Map<String, dynamic> msg) {
+    try {
+      final payload = msg['payload'] as Map<String, dynamic>;
+      final session = payload['session'] as Map<String, dynamic>;
+      final reconnectUrl = session['reconnect_url'] as String?;
+      if (reconnectUrl != null && reconnectUrl.isNotEmpty) {
+        debugPrint('EventSub reconnecting to $reconnectUrl');
+        connect(url: reconnectUrl);
+      }
+    } catch (e) {
+      debugPrint('EventSub reconnect failed: $e');
+    }
+  }
 
   void _resetKeepalive() {
     _keepaliveTimer?.cancel();

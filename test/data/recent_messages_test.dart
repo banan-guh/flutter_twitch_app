@@ -85,5 +85,35 @@ void main() {
       final msg2 = RecentMessagesService.parseIrcLine(raw2);
       expect(msg1!.color, msg2!.color);
     });
+
+    test('parses reply with emotes without crashing', () {
+      // Original text: '@SomeUser hello forsenE' (23 chars)
+      // Emote 123456 at original positions 16-22 (inclusive) = 'forsenE'
+      // After stripping '@SomeUser ' (10 chars), displayText = 'hello forsenE' (13 chars)
+      // Without fix: displayText.substring(16, 23) would throw RangeError
+      const raw =
+          '@display-name=testuser;id=em-reply-1;rm-received-ts=1700000000000;reply-parent-msg-id=parent-789;reply-parent-display-name=SomeUser;reply-parent-msg-body=hi;emotes=123456:16-22 :testuser!testuser@testuser.tmi.twitch.tv PRIVMSG #xqc :@SomeUser hello forsenE';
+      final msg = RecentMessagesService.parseIrcLine(raw);
+      expect(msg, isNotNull);
+      expect(msg!.text, 'hello forsenE');
+      expect(msg.emotePositions, hasLength(1));
+      expect(msg.emotePositions!.first.emoteId, '123456');
+      expect(msg.emotePositions!.first.emoteCode, 'forsenE');
+      // Adjusted positions: 16-10=6 start, 22-10=12 end (inclusive) → endIndex=13
+      expect(msg.emotePositions!.first.startIndex, 6);
+      expect(msg.emotePositions!.first.endIndex, 13);
+    });
+
+    test('parses non-reply emotes unchanged', () {
+      const raw =
+          '@display-name=testuser;id=em-noreply-1;rm-received-ts=1700000000000;emotes=123456:6-12 :testuser!testuser@testuser.tmi.twitch.tv PRIVMSG #xqc :hello forsenE';
+      final msg = RecentMessagesService.parseIrcLine(raw);
+      expect(msg, isNotNull);
+      expect(msg!.text, 'hello forsenE');
+      expect(msg.emotePositions, hasLength(1));
+      expect(msg.emotePositions!.first.emoteCode, 'forsenE');
+      expect(msg.emotePositions!.first.startIndex, 6);
+      expect(msg.emotePositions!.first.endIndex, 13);
+    });
   });
 }
