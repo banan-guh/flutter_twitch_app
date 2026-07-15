@@ -35,6 +35,7 @@ class TwitchMessage {
   final List<MessageBadge>? badges;
   final String? sourceBroadcasterId;
   final String? sourceBroadcasterName;
+  List<InlineSpan>? cachedSpans;
   Color get bodyColor =>
       isSystem ? Colors.grey : Colors.white.withValues(alpha: 0.87);
   TwitchMessage({

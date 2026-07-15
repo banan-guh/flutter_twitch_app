@@ -55,8 +55,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   final _emoteManager = EmoteManager();
   final _badgeService = TwitchBadgeService();
   final _channels = <String>[];
-  final _tabLayoutKey = GlobalKey<TabbedLayoutState>();
   final _channelNotifier = ValueNotifier<List<String>>([]);
+  final _chatVersion = ValueNotifier(0);
   String? _selectedChannel;
   final _channelMessages = <String, List<TwitchMessage>>{};
   final _scrollControllers = <String, ScrollController>{};
@@ -71,7 +71,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   TwitchMessage? _openThreadRoot;
   OverlayPanel _activePanel = OverlayPanel.closed;
   int _emoteTabIndex = 0;
-  final _emoteTabLayoutKey = GlobalKey<TabbedLayoutState>();
   List<GenericEmote> _cachedRecentEmotes = [];
   bool _recentEmotesLoaded = false;
   int _maxMessagesPerChannel = 200;
@@ -119,6 +118,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   void _onEmotesChanged() {
+    for (final msgs in _channelMessages.values) {
+      for (final msg in msgs) {
+        msg.cachedSpans = null;
+      }
+    }
     if (mounted) setState(() {});
   }
 
@@ -193,6 +197,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     for (final c in _scrollControllers.values) {
       c.dispose();
     }
+    _chatVersion.dispose();
     super.dispose();
   }
 
@@ -331,24 +336,35 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       msg.isHighlighted = true;
     }
 
-    setState(() {
-      _channelMessages.putIfAbsent(channel, () => []);
-      _channelMessages[channel]!.insert(0, msg);
-      _truncateChannelMessages(channel);
-      if (channel != _selectedChannel && !msg.isHistory) {
-        _channelsWithUnread.add(channel);
-      }
-      if (msg.messageId != null) {
-        _messageKeys.putIfAbsent(
-          '$channel:${msg.messageId}',
-          () => GlobalKey(),
-        );
-      }
-      if (msg.isHighlighted) {
-        _channelMessages.putIfAbsent(_mentionsChannel, () => []);
-        _channelMessages[_mentionsChannel]!.insert(0, msg);
-      }
-    });
+    _channelMessages.putIfAbsent(channel, () => []);
+    _channelMessages[channel]!.insert(0, msg);
+    _truncateChannelMessages(channel);
+
+    if (msg.messageId != null) {
+      _messageKeys.putIfAbsent(
+        '$channel:${msg.messageId}',
+        () => GlobalKey(),
+      );
+    }
+
+    if (msg.isHighlighted) {
+      _channelMessages.putIfAbsent(_mentionsChannel, () => []);
+      _channelMessages[_mentionsChannel]!.insert(0, msg);
+    }
+
+    _chatVersion.value++;
+
+    var needsHeaderRebuild = false;
+    if (channel != _selectedChannel && !msg.isHistory) {
+      _channelsWithUnread.add(channel);
+      needsHeaderRebuild = true;
+    }
+    if (msg.isHighlighted) {
+      needsHeaderRebuild = true;
+    }
+    if (needsHeaderRebuild && mounted) {
+      setState(() {});
+    }
     _precacheMessageEmotes(msg, channel);
   }
 
@@ -525,12 +541,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _channelMessages.putIfAbsent(name, () => []);
       _selectedChannel = name;
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) setState(() {});
-      final idx = _channels.indexOf(name);
-      _tabLayoutKey.currentState?.jumpToPage(idx);
-    });
-
     _focusNode.requestFocus();
 
     final loadingMsg = TwitchMessage(
@@ -769,11 +779,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) setState(() {});
-      if (_selectedChannel != null) {
-        _tabLayoutKey.currentState?.jumpToPage(
-          _channels.indexOf(_selectedChannel!),
-        );
-      }
     });
   }
 
@@ -1215,7 +1220,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return threadMsgs;
   }
 
-  Widget _buildThreadPanel() {
+  Widget _buildThreadPanel(double panelHeight) {
     final root = _openThreadRoot;
     if (root == null) return const SizedBox.shrink();
     final theme = Theme.of(context);
@@ -1227,60 +1232,33 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          GestureDetector(
-            onVerticalDragUpdate: (details) {
-              final newValue =
-                  (_panelAnimController.value -
-                          details.primaryDelta! / context.size!.height)
-                      .clamp(0.0, 1.0);
-              _panelAnimController.value = newValue;
-            },
-            onVerticalDragEnd: (details) {
-              if (_panelAnimController.value < 0.5 ||
-                  (details.primaryVelocity ?? 0) < -200) {
-                _closePanel();
-              } else {
-                _panelAnimController.forward();
-              }
-            },
-            child: const Padding(
-              padding: EdgeInsets.only(top: 8, bottom: 8),
-              child: Center(
-                child: SizedBox(
-                  width: 32,
-                  height: 4,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Colors.grey,
-                      borderRadius: BorderRadius.all(Radius.circular(2)),
+          _DragHandle(
+            controller: _panelAnimController,
+            panelHeight: panelHeight,
+            onClose: _closePanel,
+            header: Material(
+              elevation: 2,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: _closePanel,
                     ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Material(
-            elevation: 2,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: _closePanel,
-                  ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      'Reply Thread',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: theme.colorScheme.onSurface,
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        'Reply Thread',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: theme.colorScheme.onSurface,
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -1369,7 +1347,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildMentionsPanel() {
+  Widget _buildMentionsPanel(double panelHeight) {
     final msgs = _channelMessages[_mentionsChannel] ?? [];
     final theme = Theme.of(context);
     final surface = theme.colorScheme.surface;
@@ -1379,60 +1357,33 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          GestureDetector(
-            onVerticalDragUpdate: (details) {
-              final newValue =
-                  (_panelAnimController.value -
-                          details.primaryDelta! / context.size!.height)
-                      .clamp(0.0, 1.0);
-              _panelAnimController.value = newValue;
-            },
-            onVerticalDragEnd: (details) {
-              if (_panelAnimController.value < 0.5 ||
-                  (details.primaryVelocity ?? 0) < -200) {
-                _closePanel();
-              } else {
-                _panelAnimController.forward();
-              }
-            },
-            child: const Padding(
-              padding: EdgeInsets.only(top: 8, bottom: 8),
-              child: Center(
-                child: SizedBox(
-                  width: 32,
-                  height: 4,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Colors.grey,
-                      borderRadius: BorderRadius.all(Radius.circular(2)),
+          _DragHandle(
+            controller: _panelAnimController,
+            panelHeight: panelHeight,
+            onClose: _closePanel,
+            header: Material(
+              elevation: 2,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.arrow_back),
+                      onPressed: _closePanel,
                     ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Material(
-            elevation: 2,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.arrow_back),
-                    onPressed: _closePanel,
-                  ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      'Mentions / Whispers',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: theme.colorScheme.onSurface,
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        'Mentions / Whispers',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: theme.colorScheme.onSurface,
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -1520,7 +1471,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildEmoteMenu() {
+  Widget _buildEmoteMenu(double panelHeight) {
     final theme = Theme.of(context);
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 4),
@@ -1538,41 +1489,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       clipBehavior: Clip.hardEdge,
       child: Column(
         children: [
-          GestureDetector(
-            onVerticalDragUpdate: (details) {
-              final newValue =
-                  (_panelAnimController.value -
-                          details.primaryDelta! / context.size!.height)
-                      .clamp(0.0, 1.0);
-              _panelAnimController.value = newValue;
-            },
-            onVerticalDragEnd: (details) {
-              if (_panelAnimController.value < 0.5 ||
-                  (details.primaryVelocity ?? 0) < -200) {
-                _closePanel();
-              } else {
-                _panelAnimController.forward();
-              }
-            },
-            child: const Padding(
-              padding: EdgeInsets.only(top: 8, bottom: 8),
-              child: Center(
-                child: SizedBox(
-                  width: 32,
-                  height: 4,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Colors.grey,
-                      borderRadius: BorderRadius.all(Radius.circular(2)),
-                    ),
-                  ),
-                ),
-              ),
-            ),
+          _DragHandle(
+            controller: _panelAnimController,
+            panelHeight: panelHeight,
+            onClose: _closePanel,
+            barPadding: const EdgeInsets.symmetric(vertical: 24),
           ),
           Expanded(
             child: TabbedLayout(
-              key: _emoteTabLayoutKey,
               tabAlignment: Alignment.center,
               tabs: const ['Recent', 'Subs', 'Channel', 'Global'],
               selectedIndex: _emoteTabIndex,
@@ -1744,27 +1668,28 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final msgs = _channelMessages[channel];
     if (msgs == null || msgs.length <= maxMessages) return;
 
-    final threadIds = <String>{};
+    final threadParentIds = <String>{};
     for (final m in msgs) {
       if (m.replyToParentId != null) {
-        threadIds.add(m.replyToParentId!);
+        threadParentIds.add(m.replyToParentId!);
       }
     }
 
-    while (msgs.length > maxMessages) {
-      bool removed = false;
-      for (int i = msgs.length - 1; i >= 0; i--) {
-        final m = msgs[i];
-        final inThread =
-            (m.messageId != null && threadIds.contains(m.messageId!)) ||
-            m.replyToParentId != null;
-        if (!inThread) {
-          msgs.removeAt(i);
-          removed = true;
-          break;
-        }
+    final toRemove = <int>[];
+    int extra = msgs.length - maxMessages;
+    for (int i = msgs.length - 1; i >= 0 && extra > 0; i--) {
+      final m = msgs[i];
+      final inThread =
+          (m.messageId != null && threadParentIds.contains(m.messageId!)) ||
+          m.replyToParentId != null;
+      if (!inThread) {
+        toRemove.add(i);
+        extra--;
       }
-      if (!removed) break;
+    }
+
+    for (final i in toRemove) {
+      msgs.removeAt(i);
     }
   }
 
@@ -1833,58 +1758,60 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         return Stack(
                           clipBehavior: Clip.hardEdge,
                           children: [
-                            TabbedLayout(
-                              key: _tabLayoutKey,
-                              tabs: _channels,
-                              selectedIndex: _channels.indexOf(
-                                _selectedChannel ?? '',
+                            ListenableBuilder(
+                              listenable: _chatVersion,
+                              builder: (context, _) => TabbedLayout(
+                                tabs: _channels,
+                                selectedIndex: _channels.indexOf(
+                                  _selectedChannel ?? '',
+                                ),
+                                onSelectedIndexChanged: _onChannelChanged,
+                                pageBuilder: (_, i) =>
+                                    _buildChat(_channels[i]),
+                                tabBuilder: (_, i) {
+                                  final channel = _channels[i];
+                                  final selected =
+                                      channel == _selectedChannel;
+                                  return Text(
+                                    channel,
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: selected ||
+                                              _channelsWithUnread.contains(
+                                                channel,
+                                              )
+                                          ? FontWeight.w600
+                                          : FontWeight.normal,
+                                      color: selected
+                                          ? theme.colorScheme.primary
+                                          : _channelsWithUnread.contains(
+                                                    channel,
+                                                  )
+                                              ? Colors.white
+                                              : null,
+                                    ),
+                                  );
+                                },
                               ),
-                              onSelectedIndexChanged: _onChannelChanged,
-                              pageBuilder: (_, i) =>
-                                  _buildChat(_channels[i]),
-                              tabBuilder: (_, i) {
-                                final channel = _channels[i];
-                                final selected =
-                                    channel == _selectedChannel;
-                                return Text(
-                                  channel,
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: selected ||
-                                            _channelsWithUnread.contains(
-                                              channel,
-                                            )
-                                        ? FontWeight.w600
-                                        : FontWeight.normal,
-                                    color: selected
-                                        ? theme.colorScheme.primary
-                                        : _channelsWithUnread.contains(
-                                                  channel,
-                                                )
-                                            ? Colors.white
-                                            : null,
-                                  ),
-                                );
-                              },
                             ),
                             if (_activePanel == OverlayPanel.thread)
                               SlidePanel(
                                 animation: _panelAnimController,
                                 stackHeight: stackHeight,
-                                child: _buildThreadPanel(),
+                                child: _buildThreadPanel(stackHeight),
                               ),
                             if (_activePanel == OverlayPanel.mentions)
                               SlidePanel(
                                 animation: _panelAnimController,
                                 stackHeight: stackHeight,
-                                child: _buildMentionsPanel(),
+                                child: _buildMentionsPanel(stackHeight),
                               ),
                             if (_activePanel == OverlayPanel.emotes)
                               SlidePanel(
                                 animation: _panelAnimController,
                                 stackHeight: stackHeight,
                                 top: stackHeight * 0.6,
-                                child: _buildEmoteMenu(),
+                                child: _buildEmoteMenu(stackHeight * 0.4),
                               ),
                           ],
                         );
@@ -1972,16 +1899,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     Color surface, {
     bool colored = false,
   }) {
-    final channelEmotes = _emoteManager.byCode(channel);
-    final emoteSpans = EmoteText.build(
-      text: msg.text,
-      twitchPositions: msg.emotePositions,
-      channelEmotes: channelEmotes,
-      onEmoteTap: _showEmoteSheet,
-    );
+    msg.cachedSpans ??= _computeMessageSpans(msg, channel);
     if (colored) {
       return [
-        ...emoteSpans.map((span) {
+        ...msg.cachedSpans!.map((span) {
           if (span is TextSpan) {
             return TextSpan(
               text: span.text,
@@ -1997,7 +1918,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         }),
       ];
     }
-    return emoteSpans;
+    return msg.cachedSpans!;
+  }
+
+  List<InlineSpan> _computeMessageSpans(TwitchMessage msg, String channel) {
+    final channelEmotes = _emoteManager.byCode(channel);
+    return EmoteText.build(
+      text: msg.text,
+      twitchPositions: msg.emotePositions,
+      channelEmotes: channelEmotes,
+      onEmoteTap: _showEmoteSheet,
+    );
   }
 
   List<WidgetSpan> _buildBadgeSpans(String channel, TwitchMessage msg) {
@@ -2651,6 +2582,68 @@ class _EmoteSheet extends StatelessWidget {
               );
             },
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DragHandle extends StatelessWidget {
+  final AnimationController controller;
+  final double panelHeight;
+  final Widget? header;
+  final VoidCallback onClose;
+  final EdgeInsetsGeometry barPadding;
+
+  const _DragHandle({
+    required this.controller,
+    required this.panelHeight,
+    this.header,
+    required this.onClose,
+    this.barPadding = const EdgeInsets.only(top: 8, bottom: 8),
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onVerticalDragUpdate: (details) {
+        final newValue =
+            (controller.value - details.primaryDelta! / panelHeight)
+                .clamp(0.0, 1.0);
+        controller.value = newValue;
+      },
+      onVerticalDragEnd: (details) {
+        if (controller.value < 0.5 ||
+            (details.primaryVelocity ?? 0) < -200) {
+          onClose();
+        } else {
+          controller.animateTo(
+            1.0,
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+          );
+        }
+      },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: barPadding,
+            child: const Center(
+              child: SizedBox(
+                width: 32,
+                height: 4,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.grey,
+                    borderRadius: BorderRadius.all(Radius.circular(2)),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          if (header != null) header!,
         ],
       ),
     );
