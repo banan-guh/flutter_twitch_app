@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/twitch_message.dart';
 import '../services/twitch_auth.dart';
 import '../services/twitch_oauth.dart';
@@ -33,13 +35,17 @@ class SettingsScreen extends StatefulWidget {
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-enum _AuthState { idle, waiting, success, error, needsSetup }
+enum _AuthState { idle, waiting, success, error, needsSetup, pasteToken }
 
 class _SettingsScreenState extends State<SettingsScreen> {
   _AuthState _authState = _AuthState.idle;
   String? _authError;
   int _maxMessagesPerChannel = 200;
   double _uiScale = 1.0;
+  bool _useBrowserOAuth = false;
+  String? _browserAuthState;
+  String? _browserAuthUrl;
+  final _pasteController = TextEditingController();
 
   @override
   void initState() {
@@ -48,6 +54,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     widget.channelNotifier?.addListener(_onChannelsChanged);
     _loadMaxMessages();
     _loadUiScale();
+    _loadOAuthMode();
   }
 
   Future<void> _loadMaxMessages() async {
@@ -69,9 +76,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _loadOAuthMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() {
+        _useBrowserOAuth = prefs.getBool('use_browser_oauth') ?? false;
+      });
+    }
+  }
+
+  Future<void> _saveOAuthMode(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('use_browser_oauth', value);
+  }
+
   @override
   void dispose() {
     widget.channelNotifier?.removeListener(_onChannelsChanged);
+    _pasteController.dispose();
     super.dispose();
   }
 
@@ -90,21 +112,75 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return;
     }
 
-    final starter = widget.oAuthStarter ?? TwitchOAuth.startFlow;
-    final token = await starter(context);
-
-    if (!mounted) return;
-
-    if (token != null && token.isNotEmpty) {
-      widget.twitchAuth.setCredentials(accessToken: token);
-      setState(() => _authState = _AuthState.success);
+    if (_useBrowserOAuth) {
+      _startBrowserOAuth();
     } else {
+      final starter = widget.oAuthStarter ?? TwitchOAuth.startFlow;
+      final token = await starter(context);
+
+      if (!mounted) return;
+
+      if (token != null && token.isNotEmpty) {
+        widget.twitchAuth.setCredentials(accessToken: token);
+        setState(() => _authState = _AuthState.success);
+      } else {
+        setState(() {
+          _authState = _AuthState.error;
+          _authError =
+              TwitchOAuth.lastError ?? 'Authorization failed or timed out.';
+        });
+      }
+    }
+  }
+
+  void _startBrowserOAuth() {
+    final urlInfo = TwitchOAuth.generateAuthUrl();
+    if (urlInfo == null) return;
+
+    _browserAuthUrl = urlInfo.url;
+    _browserAuthState = urlInfo.state;
+    _pasteController.clear();
+
+    setState(() => _authState = _AuthState.pasteToken);
+
+    launchUrl(Uri.parse(urlInfo.url), mode: LaunchMode.externalApplication);
+  }
+
+  void _submitPastedUrl() {
+    final pasted = _pasteController.text.trim();
+    if (pasted.isEmpty) return;
+
+    final params = TwitchOAuth.parseFragment(pasted);
+    final error = params['error'];
+    final token = params['access_token'];
+    final state = params['state'];
+
+    if (error != null) {
       setState(() {
         _authState = _AuthState.error;
-        _authError =
-            TwitchOAuth.lastError ?? 'Authorization failed or timed out.';
+        _authError = 'Twitch returned: $error';
       });
+      return;
     }
+
+    if (token != null) {
+      if (state != _browserAuthState) {
+        setState(() {
+          _authState = _AuthState.error;
+          _authError = 'CSRF: state mismatch';
+        });
+        return;
+      }
+      widget.twitchAuth.setCredentials(accessToken: token);
+      setState(() => _authState = _AuthState.success);
+      return;
+    }
+
+    setState(() {
+      _authError =
+          'No access token found in the pasted URL. '
+          'Make sure you paste the full redirect URL including the #fragment.';
+    });
   }
 
   void _clearCredentials() {
@@ -231,9 +307,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             children: [
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Text(
-                  'UI scale: ${_uiScale.toStringAsFixed(1)}x',
-                ),
+                child: Text('UI scale: ${_uiScale.toStringAsFixed(1)}x'),
               ),
               Slider(
                 value: _uiScale,
@@ -269,6 +343,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             icon: const Icon(Icons.speed),
             label: const Text('Message Latency Benchmark'),
+          ),
+          const SizedBox(height: 8),
+          SwitchListTile(
+            title: const Text('Use browser for OAuth'),
+            subtitle: const Text(
+              'Opens Twitch login in external browser instead of in-app WebView',
+            ),
+            value: _useBrowserOAuth,
+            onChanged: (value) {
+              setState(() => _useBrowserOAuth = value);
+              _saveOAuthMode(value);
+            },
           ),
         ],
       ),
@@ -325,6 +411,82 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const Text('Opening Twitch login...'),
               const SizedBox(height: 16),
               const CircularProgressIndicator(),
+            ],
+          ),
+        );
+
+      case _AuthState.pasteToken:
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (_authError != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Text(
+                    _authError!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              const Text(
+                'Authorize in your browser, then paste the full redirect URL '
+                '(including the #fragment) below.',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              SelectionArea(
+                child: Text(
+                  _browserAuthUrl ?? '',
+                  style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextButton.icon(
+                onPressed: () {
+                  if (_browserAuthUrl != null) {
+                    Clipboard.setData(ClipboardData(text: _browserAuthUrl!));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('URL copied!')),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.copy, size: 18),
+                label: const Text('Copy URL'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _pasteController,
+                decoration: const InputDecoration(
+                  hintText: 'Paste redirect URL here...',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 2,
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () {
+                        setState(() => _authState = _AuthState.idle);
+                      },
+                      child: const Text('Cancel'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: _submitPastedUrl,
+                      child: const Text('Submit'),
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
         );

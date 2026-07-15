@@ -1,9 +1,10 @@
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../twitch_config.dart';
 
-class TwitchAuth {
+class TwitchAuth extends ChangeNotifier {
   String? accessToken;
   String? refreshToken;
 
@@ -29,6 +30,7 @@ class TwitchAuth {
     this.accessToken = accessToken;
     this.refreshToken = refreshToken;
     _save();
+    notifyListeners();
   }
 
   Future<void> clear() async {
@@ -37,6 +39,7 @@ class TwitchAuth {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('access_token');
     await prefs.remove('refresh_token');
+    notifyListeners();
   }
 
   Future<bool> refresh() async {

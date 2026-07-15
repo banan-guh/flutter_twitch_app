@@ -156,13 +156,14 @@ class _BenchmarkScreenState extends State<BenchmarkScreen> {
           const SizedBox(height: 16),
           _phase == _Phase.idle || _phase == _Phase.done
               ? FilledButton.icon(
-                  onPressed: _phase == _Phase.running || _phase == _Phase.resolving
+                  onPressed:
+                      _phase == _Phase.running || _phase == _Phase.resolving
                       ? null
                       : _runBenchmark,
                   icon: const Icon(Icons.speed),
-                  label: Text(_phase == _Phase.done
-                      ? 'Run again'
-                      : 'Start Benchmark'),
+                  label: Text(
+                    _phase == _Phase.done ? 'Run again' : 'Start Benchmark',
+                  ),
                 )
               : const SizedBox(
                   width: 24,
@@ -176,13 +177,17 @@ class _BenchmarkScreenState extends State<BenchmarkScreen> {
             ),
           if (_results.isNotEmpty) ...[
             const SizedBox(height: 24),
-            const Text('Per-message latencies (ms):',
-                style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text(
+              'Per-message latencies (ms):',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 8),
             _buildTable(),
             const SizedBox(height: 24),
-            const Text('Summary (ms):',
-                style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text(
+              'Summary (ms):',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 8),
             _buildSummary(),
           ],
@@ -194,12 +199,18 @@ class _BenchmarkScreenState extends State<BenchmarkScreen> {
   Widget _buildTable() {
     final rows = <DataRow>[];
     for (final r in _results) {
-      rows.add(DataRow(cells: [
-        DataCell(Text('${r.index}')),
-        DataCell(Text(r.postRtt.inMilliseconds.toString())),
-        DataCell(Text(r.eventSubDelivery?.inMilliseconds.toString() ?? '—')),
-        DataCell(Text(r.ircDelivery?.inMilliseconds.toString() ?? '—')),
-      ]));
+      rows.add(
+        DataRow(
+          cells: [
+            DataCell(Text('${r.index}')),
+            DataCell(Text(r.postRtt.inMilliseconds.toString())),
+            DataCell(
+              Text(r.eventSubDelivery?.inMilliseconds.toString() ?? '—'),
+            ),
+            DataCell(Text(r.ircDelivery?.inMilliseconds.toString() ?? '—')),
+          ],
+        ),
+      );
     }
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -233,52 +244,91 @@ class _BenchmarkScreenState extends State<BenchmarkScreen> {
     esValues.sort((a, b) => a.compareTo(b));
     ircValues.sort((a, b) => a.compareTo(b));
 
-    return DataTable(columns: const [
-      DataColumn(label: Text('Metric')),
-      DataColumn(label: Text('EventSub')),
-      DataColumn(label: Text('IRC')),
-    ], rows: [
-      DataRow(cells: [
-        const DataCell(Text('Count')),
-        DataCell(Text('${esValues.length}')),
-        DataCell(Text('${ircValues.length}')),
-      ]),
-      DataRow(cells: [
-        const DataCell(Text('Min')),
-        DataCell(Text(esValues.isNotEmpty
-            ? '${esValues.first.inMilliseconds}'
-            : '—')),
-        DataCell(Text(ircValues.isNotEmpty
-            ? '${ircValues.first.inMilliseconds}'
-            : '—')),
-      ]),
-      DataRow(cells: [
-        const DataCell(Text('Max')),
-        DataCell(Text(esValues.isNotEmpty
-            ? '${esValues.last.inMilliseconds}'
-            : '—')),
-        DataCell(Text(ircValues.isNotEmpty
-            ? '${ircValues.last.inMilliseconds}'
-            : '—')),
-      ]),
-      DataRow(cells: [
-        const DataCell(Text('Average')),
-        DataCell(Text(esValues.isNotEmpty
-            ? '${esValues.map((e) => e.inMilliseconds).reduce((a, b) => a + b) ~/ esValues.length}'
-            : '—')),
-        DataCell(Text(ircValues.isNotEmpty
-            ? '${ircValues.map((e) => e.inMilliseconds).reduce((a, b) => a + b) ~/ ircValues.length}'
-            : '—')),
-      ]),
-      DataRow(cells: [
-        const DataCell(Text('Median')),
-        DataCell(Text(esValues.isNotEmpty
-            ? _median(esValues).toStringAsFixed(0)
-            : '—')),
-        DataCell(Text(ircValues.isNotEmpty
-            ? _median(ircValues).toStringAsFixed(0)
-            : '—')),
-      ]),
-    ]);
+    return DataTable(
+      columns: const [
+        DataColumn(label: Text('Metric')),
+        DataColumn(label: Text('EventSub')),
+        DataColumn(label: Text('IRC')),
+      ],
+      rows: [
+        DataRow(
+          cells: [
+            const DataCell(Text('Count')),
+            DataCell(Text('${esValues.length}')),
+            DataCell(Text('${ircValues.length}')),
+          ],
+        ),
+        DataRow(
+          cells: [
+            const DataCell(Text('Min')),
+            DataCell(
+              Text(
+                esValues.isNotEmpty ? '${esValues.first.inMilliseconds}' : '—',
+              ),
+            ),
+            DataCell(
+              Text(
+                ircValues.isNotEmpty
+                    ? '${ircValues.first.inMilliseconds}'
+                    : '—',
+              ),
+            ),
+          ],
+        ),
+        DataRow(
+          cells: [
+            const DataCell(Text('Max')),
+            DataCell(
+              Text(
+                esValues.isNotEmpty ? '${esValues.last.inMilliseconds}' : '—',
+              ),
+            ),
+            DataCell(
+              Text(
+                ircValues.isNotEmpty ? '${ircValues.last.inMilliseconds}' : '—',
+              ),
+            ),
+          ],
+        ),
+        DataRow(
+          cells: [
+            const DataCell(Text('Average')),
+            DataCell(
+              Text(
+                esValues.isNotEmpty
+                    ? '${esValues.map((e) => e.inMilliseconds).reduce((a, b) => a + b) ~/ esValues.length}'
+                    : '—',
+              ),
+            ),
+            DataCell(
+              Text(
+                ircValues.isNotEmpty
+                    ? '${ircValues.map((e) => e.inMilliseconds).reduce((a, b) => a + b) ~/ ircValues.length}'
+                    : '—',
+              ),
+            ),
+          ],
+        ),
+        DataRow(
+          cells: [
+            const DataCell(Text('Median')),
+            DataCell(
+              Text(
+                esValues.isNotEmpty
+                    ? _median(esValues).toStringAsFixed(0)
+                    : '—',
+              ),
+            ),
+            DataCell(
+              Text(
+                ircValues.isNotEmpty
+                    ? _median(ircValues).toStringAsFixed(0)
+                    : '—',
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
   }
 }

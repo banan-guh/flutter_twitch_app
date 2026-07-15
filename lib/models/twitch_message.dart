@@ -35,7 +35,8 @@ class TwitchMessage {
   bool failed;
   bool unconfirmed;
   String? tempId;
-  Color get bodyColor => isSystem ? Colors.grey : Colors.white.withValues(alpha: 0.87);
+  Color get bodyColor =>
+      isSystem ? Colors.grey : Colors.white.withValues(alpha: 0.87);
   TwitchMessage({
     required this.username,
     required this.text,

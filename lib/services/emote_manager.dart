@@ -34,9 +34,7 @@ class EmoteManager extends ChangeNotifier {
 
   String? get fetchError {
     if (_lastErrors.isEmpty) return null;
-    return _lastErrors.entries
-        .map((e) => '${e.key}: ${e.value}')
-        .join('; ');
+    return _lastErrors.entries.map((e) => '${e.key}: ${e.value}').join('; ');
   }
 
   ChannelEmotes? byCode(String channel) {
@@ -55,7 +53,6 @@ class EmoteManager extends ChangeNotifier {
     if (cached != null) {
       _globalCache = cached;
       notifyListeners();
-      return;
     }
     final emotes = await _fetchAllGlobal();
     _globalCache = _buildChannelMap(emotes);
@@ -64,7 +61,6 @@ class EmoteManager extends ChangeNotifier {
   }
 
   Future<void> resolveEmotes(String channel, String? broadcasterId) async {
-    if (_channelCaches.containsKey(channel)) return;
     _lastErrors.clear();
     final cached = await _loadFromPrefs(
       'emotes2_$channel',
@@ -75,7 +71,6 @@ class EmoteManager extends ChangeNotifier {
       _channelCaches[channel] = cached;
       _channelFetchTimes[channel] = DateTime.now();
       notifyListeners();
-      return;
     }
     final emotes = await _fetchAllChannel(broadcasterId);
     final map = _buildChannelMap(emotes);
@@ -213,11 +208,15 @@ class EmoteManager extends ChangeNotifier {
     ChannelEmotes channelEmotes,
     Duration ttl,
   ) async {
+    final nonTwitch = channelEmotes.suggestions
+        .where((e) => e.type != EmoteType.twitch)
+        .toList();
+    if (nonTwitch.isEmpty) return;
     try {
       final prefs = await SharedPreferences.getInstance();
       final data = {
         'ts': DateTime.now().toIso8601String(),
-        'emotes': channelEmotes.suggestions.map((e) => e.toJson()).toList(),
+        'emotes': nonTwitch.map((e) => e.toJson()).toList(),
       };
       await prefs.setString(key, jsonEncode(data));
     } catch (_) {}

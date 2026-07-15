@@ -21,7 +21,10 @@ void main() {
 
     test('setCredentials persists token', () async {
       final auth = TwitchAuth();
-      auth.setCredentials(accessToken: 'test_token', refreshToken: 'test_refresh');
+      auth.setCredentials(
+        accessToken: 'test_token',
+        refreshToken: 'test_refresh',
+      );
       expect(auth.accessToken, 'test_token');
       expect(auth.refreshToken, 'test_refresh');
       expect(auth.isConfigured, isTrue);
@@ -30,7 +33,10 @@ void main() {
 
     test('clear removes tokens', () async {
       final auth = TwitchAuth();
-      auth.setCredentials(accessToken: 'test_token', refreshToken: 'test_refresh');
+      auth.setCredentials(
+        accessToken: 'test_token',
+        refreshToken: 'test_refresh',
+      );
       await auth.clear();
       expect(auth.accessToken, isNull);
       expect(auth.refreshToken, isNull);

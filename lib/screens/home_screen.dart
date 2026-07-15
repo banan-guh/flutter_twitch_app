@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/generic_emote.dart';
 import '../models/twitch_message.dart';
 import '../services/twitch_api.dart';
 import '../services/twitch_auth.dart';
@@ -126,9 +127,35 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _emoteManager.accessToken = widget.twitchAuth.accessToken;
     _emoteManager.preloadGlobalEmotes();
     _emoteManager.addListener(_onEmotesChanged);
+    widget.twitchAuth.addListener(_onAuthChanged);
   }
 
   void _onEmotesChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onAuthChanged() {
+    _emoteManager.accessToken = widget.twitchAuth.accessToken;
+    _refreshEmotesAfterAuth();
+  }
+
+  Future<void> _refreshEmotesAfterAuth() async {
+    try {
+      for (final channel in _channels) {
+        final userId = await TwitchApi.getUserId(widget.twitchAuth, channel);
+        if (userId != null) {
+          _channelUserIds[channel] = userId;
+        }
+      }
+      _emoteManager.evictGlobal();
+      _emoteManager.preloadGlobalEmotes();
+      for (final channel in _channels) {
+        _emoteManager.evictChannel(channel);
+        _emoteManager.resolveEmotes(channel, _channelUserIds[channel]);
+      }
+    } catch (e) {
+      debugPrint('_refreshEmotesAfterAuth failed: $e');
+    }
     if (mounted) setState(() {});
   }
 
@@ -212,6 +239,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
     _pendingTimers.clear();
     _emoteManager.removeListener(_onEmotesChanged);
+    widget.twitchAuth.removeListener(_onAuthChanged);
     _messageController.dispose();
     _focusNode.dispose();
     _ircBanSub?.cancel();
@@ -629,6 +657,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       await _subscribeChannel(name);
     }
 
+    if (_channelUserIds[name] == null) {
+      final userId = await TwitchApi.getUserId(auth, name);
+      if (userId != null) {
+        _channelUserIds[name] = userId;
+      }
+    }
+
     final broadcasterId = _channelUserIds[name];
     _emoteManager.accessToken = widget.twitchAuth.accessToken;
     await _emoteManager.resolveEmotes(name, broadcasterId);
@@ -906,10 +941,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               () => _markUnconfirmed(tempId),
             );
           } else {
-            _markFailed(
-              tempId,
-              TwitchApi.lastError ?? 'unknown error',
-            );
+            _markFailed(tempId, TwitchApi.lastError ?? 'unknown error');
           }
         } catch (e) {
           if (!mounted) return;
@@ -928,8 +960,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     // _channelUserIds[channel] is null (e.g. _subscribeChannel failed
     // silently). Fix: queue the message until broadcasterId resolves, or
     // skip pending creation when Helix path isn't available.
-    _irc.sendMessage(channel, text,
-        replyParentMessageId: reply?.messageId);
+    _irc.sendMessage(channel, text, replyParentMessageId: reply?.messageId);
     _pendingTimers[tempId] = Timer(
       const Duration(seconds: 3),
       () => _markUnconfirmed(tempId),
@@ -1599,11 +1630,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       );
                     },
                   ),
-                ),
-              ],
-            ),
-          );
-        }
+          ),
+        ],
+      ),
+    );
+  }
 
   void _showUserProfile(String username, String? userId) {
     showModalBottomSheet(
@@ -1620,14 +1651,26 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
+  void _showEmoteSheet(GenericEmote emote) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => _EmoteSheet(
+        emote: emote,
+        messageController: _messageController,
+        focusNode: _focusNode,
+        onClose: () => Navigator.pop(ctx),
+      ),
+    );
+  }
+
   void _selectChannel(int index, {bool animatePageView = true}) {
     final channel = _channels[index];
     if (_selectedChannel == channel) return;
 
     final prevChannel = _selectedChannel;
-    final wasUnderway = _underway &&
-        _animStartContentX != null &&
-        _animEndContentX != null;
+    final wasUnderway =
+        _underway && _animStartContentX != null && _animEndContentX != null;
 
     setState(() {
       _selectedChannel = channel;
@@ -1664,10 +1707,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           _animStartContentX = startX;
           _animEndContentX = endX;
           _underway = true;
-          final duration =
-              (200 + distance * 0.3).clamp(150, 300).toInt();
-          _underlineAnimController.duration =
-              Duration(milliseconds: duration);
+          final duration = (200 + distance * 0.3).clamp(150, 300).toInt();
+          _underlineAnimController.duration = Duration(milliseconds: duration);
           _underlineAnimController.forward(from: 0).then((_) {
             _underway = false;
             _animStartContentX = null;
@@ -1764,311 +1805,327 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final dividerColor = theme.dividerColor;
 
     return MediaQuery(
-      data: MediaQuery.of(context).copyWith(
-        textScaler: TextScaler.linear(_uiScale),
-      ),
+      data: MediaQuery.of(
+        context,
+      ).copyWith(textScaler: TextScaler.linear(_uiScale)),
       child: Scaffold(
-      body: Column(
-        children: [
-          SafeArea(
-            bottom: false,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: Row(
+        body: Column(
+          children: [
+            SafeArea(
+              bottom: false,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Row(
+                  children: [
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.add),
+                      tooltip: 'Join channel',
+                      onPressed: _addChannelDialog,
+                    ),
+                    IconButton(
+                      icon: _unreadMentions > 0
+                          ? Badge(
+                              label: Text('$_unreadMentions'),
+                              child: const Icon(Icons.notifications_outlined),
+                            )
+                          : const Icon(Icons.notifications_outlined),
+                      tooltip: 'Mentions',
+                      onPressed: () {
+                        _unreadMentions = 0;
+                        if (mounted) setState(() {});
+                        if (_showingMentions) {
+                          _closePanel();
+                        } else {
+                          _showMentionsView();
+                        }
+                      },
+                    ),
+                    SettingsButton(
+                      twitchAuth: widget.twitchAuth,
+                      onThemeChanged: widget.onThemeChanged,
+                      channelNotifier: _channelNotifier,
+                      onLeaveChannel: _removeChannel,
+                      onAddChannel: _addChannel,
+                      onSettingsClosed: () {
+                        if (mounted) setState(() {});
+                        _connect();
+                      },
+                      eventSubMessageStream: _eventSub.onMessage,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Expanded(
+              child: _channels.isNotEmpty
+                  ? LayoutBuilder(
+                      builder: (context, constraints) {
+                        final stackHeight = constraints.maxHeight;
+                        return Stack(
+                          clipBehavior: Clip.hardEdge,
+                          children: [
+                            Column(
+                              children: [
+                                Container(
+                                  decoration: BoxDecoration(
+                                    border: Border(
+                                      bottom: BorderSide(color: dividerColor),
+                                    ),
+                                  ),
+                                  child: SizedBox(
+                                    height: 40,
+                                    child: Stack(
+                                      children: [
+                                        Align(
+                                          alignment: Alignment.centerLeft,
+                                          child: ScrollbarTheme(
+                                            data: const ScrollbarThemeData(
+                                              thickness: WidgetStatePropertyAll(
+                                                0,
+                                              ),
+                                            ),
+                                            child: SingleChildScrollView(
+                                              scrollDirection: Axis.horizontal,
+                                              controller:
+                                                  _channelScrollController,
+                                              physics:
+                                                  const ClampingScrollPhysics(),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: _channels.map((
+                                                  channel,
+                                                ) {
+                                                  final selected =
+                                                      channel ==
+                                                      _selectedChannel;
+                                                  return GestureDetector(
+                                                    behavior: HitTestBehavior
+                                                        .translucent,
+                                                    onTap: () => _selectChannel(
+                                                      _channels.indexOf(
+                                                        channel,
+                                                      ),
+                                                    ),
+                                                    child: Container(
+                                                      key: _channelItemKeys
+                                                          .putIfAbsent(
+                                                            channel,
+                                                            () => GlobalKey(),
+                                                          ),
+                                                      padding:
+                                                          const EdgeInsets.symmetric(
+                                                            horizontal: 12,
+                                                          ),
+                                                      height: 40,
+                                                      alignment:
+                                                          Alignment.center,
+                                                      child: Text(
+                                                        channel,
+                                                        style: TextStyle(
+                                                          fontSize: 14,
+                                                          fontWeight: selected
+                                                              ? FontWeight.w600
+                                                              : _channelsWithUnread
+                                                                    .contains(
+                                                                      channel,
+                                                                    )
+                                                              ? FontWeight.w600
+                                                              : FontWeight
+                                                                    .normal,
+                                                          color: selected
+                                                              ? theme
+                                                                    .colorScheme
+                                                                    .primary
+                                                              : _channelsWithUnread
+                                                                    .contains(
+                                                                      channel,
+                                                                    )
+                                                              ? Colors.white
+                                                              : null,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  );
+                                                }).toList(),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        Positioned.fill(
+                                          child: IgnorePointer(
+                                            child: CustomPaint(
+                                              key: _underlineKey,
+                                              painter: ChannelUnderlinePainter(
+                                                scrollController:
+                                                    _channelScrollController,
+                                                pageController: _pageController,
+                                                itemPositions: _itemPositions,
+                                                itemWidths: _itemWidths,
+                                                selectedIndex:
+                                                    _selectedChannel == null
+                                                    ? -1
+                                                    : _channels.indexOf(
+                                                        _selectedChannel!,
+                                                      ),
+                                                color:
+                                                    theme.colorScheme.primary,
+                                                underlineAnimation: _underway
+                                                    ? _underlineCurve
+                                                    : null,
+                                                animStartContentX: _underway
+                                                    ? _animStartContentX
+                                                    : null,
+                                                animEndContentX: _underway
+                                                    ? _animEndContentX
+                                                    : null,
+                                                repaint: _underway
+                                                    ? Listenable.merge([
+                                                        _channelScrollController,
+                                                        _pageController,
+                                                        _underlineCurve,
+                                                      ])
+                                                    : Listenable.merge([
+                                                        _channelScrollController,
+                                                        _pageController,
+                                                      ]),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                Expanded(
+                                  child: ScrollConfiguration(
+                                    behavior: ScrollConfiguration.of(context)
+                                        .copyWith(
+                                          dragDevices: {
+                                            PointerDeviceKind.touch,
+                                            PointerDeviceKind.mouse,
+                                            PointerDeviceKind.stylus,
+                                            PointerDeviceKind.unknown,
+                                          },
+                                        ),
+                                    child:
+                                        NotificationListener<
+                                          ScrollNotification
+                                        >(
+                                          onNotification:
+                                              _onPageScrollNotification,
+                                          child: PageView.builder(
+                                            controller: _pageController,
+                                            itemCount: _channels.length,
+                                            onPageChanged: (i) {
+                                              if (_programmaticPageChange)
+                                                return;
+                                              setState(() {
+                                                _selectedChannel = _channels[i];
+                                                _openThreadRoot = null;
+                                                _showingMentions = false;
+                                                _channelsWithUnread.remove(
+                                                  _channels[i],
+                                                );
+                                              });
+                                              _requestScrollToChannel(i);
+                                            },
+                                            itemBuilder: (_, i) =>
+                                                _buildChat(_channels[i]),
+                                          ),
+                                        ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (_openThreadRoot != null)
+                              Positioned(
+                                left: 0,
+                                right: 0,
+                                top: 0,
+                                height: stackHeight,
+                                child: AnimatedBuilder(
+                                  animation: _panelCurve,
+                                  builder: (context, child) =>
+                                      Transform.translate(
+                                        offset: Offset(
+                                          0,
+                                          (1 - _panelCurve.value) * stackHeight,
+                                        ),
+                                        child: child,
+                                      ),
+                                  child: _buildThreadPanel(),
+                                ),
+                              ),
+                            if (_showingMentions)
+                              Positioned(
+                                left: 0,
+                                right: 0,
+                                top: 0,
+                                height: stackHeight,
+                                child: AnimatedBuilder(
+                                  animation: _panelCurve,
+                                  builder: (context, child) =>
+                                      Transform.translate(
+                                        offset: Offset(
+                                          0,
+                                          (1 - _panelCurve.value) * stackHeight,
+                                        ),
+                                        child: child,
+                                      ),
+                                  child: _buildMentionsPanel(),
+                                ),
+                              ),
+                          ],
+                        );
+                      },
+                    )
+                  : _buildEmpty(),
+            ),
+            ColoredBox(
+              color: theme.scaffoldBackgroundColor,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.add),
-                    tooltip: 'Join channel',
-                    onPressed: _addChannelDialog,
+                  _MessageInput(
+                    controller: _messageController,
+                    focusNode: _focusNode,
+                    onSend: _sendMessage,
+                    onSendLongPress: _onSendLongPress,
+                    replyToMsg: _replyToMsg,
+                    onCancelReply: () => setState(() => _replyToMsg = null),
+                    enabled:
+                        !_showingMentions && widget.twitchAuth.isConfigured,
+                    hintText: !widget.twitchAuth.isConfigured
+                        ? 'Connect an account to chat'
+                        : _openThreadRoot != null
+                        ? 'Reply to thread...'
+                        : _showingMentions
+                        ? 'Type a message...'
+                        : null,
                   ),
-                  IconButton(
-                    icon: _unreadMentions > 0
-                        ? Badge(
-                            label: Text('$_unreadMentions'),
-                            child: const Icon(Icons.notifications_outlined),
-                          )
-                        : const Icon(Icons.notifications_outlined),
-                    tooltip: 'Mentions',
-                    onPressed: () {
-                      _unreadMentions = 0;
-                      if (mounted) setState(() {});
-                      if (_showingMentions) {
-                        _closePanel();
-                      } else {
-                        _showMentionsView();
-                      }
-                    },
-                  ),
-                  SettingsButton(
-                    twitchAuth: widget.twitchAuth,
-                    onThemeChanged: widget.onThemeChanged,
-                    channelNotifier: _channelNotifier,
-                    onLeaveChannel: _removeChannel,
-                    onAddChannel: _addChannel,
-                    onSettingsClosed: () {
-                      if (mounted) setState(() {});
-                      _connect();
-                    },
-                    eventSubMessageStream: _eventSub.onMessage,
-                  ),
+                  if (_chatStatus[_selectedChannel] != null &&
+                      _chatStatus[_selectedChannel]!.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(
+                        left: 12,
+                        right: 12,
+                        bottom: 4,
+                      ),
+                      child: Text(
+                        _chatStatus[_selectedChannel]!,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
                 ],
               ),
             ),
-          ),
-          Expanded(
-            child: _channels.isNotEmpty
-                ? LayoutBuilder(
-                    builder: (context, constraints) {
-                      final stackHeight = constraints.maxHeight;
-                      return Stack(
-                        clipBehavior: Clip.hardEdge,
-                        children: [
-                          Column(
-                            children: [
-                              Container(
-                                decoration: BoxDecoration(
-                                  border: Border(
-                                    bottom: BorderSide(color: dividerColor),
-                                  ),
-                                ),
-                                child: SizedBox(
-                                  height: 40,
-                                  child: Stack(
-                                    children: [
-                                      Align(
-                                        alignment: Alignment.centerLeft,
-                                        child: ScrollbarTheme(
-                                          data: const ScrollbarThemeData(
-                                            thickness: WidgetStatePropertyAll(
-                                              0,
-                                            ),
-                                          ),
-                                          child: SingleChildScrollView(
-                                            scrollDirection: Axis.horizontal,
-                                            controller:
-                                                _channelScrollController,
-                                            physics:
-                                                const ClampingScrollPhysics(),
-                                            child: Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: _channels.map((
-                                                channel,
-                                              ) {
-                                                final selected =
-                                                    channel == _selectedChannel;
-                                                return GestureDetector(
-                                                  behavior: HitTestBehavior
-                                                      .translucent,
-                                                  onTap: () => _selectChannel(
-                                                    _channels.indexOf(channel),
-                                                  ),
-                                                  child: Container(
-                                                    key: _channelItemKeys
-                                                        .putIfAbsent(
-                                                          channel,
-                                                          () => GlobalKey(),
-                                                        ),
-                                                    padding:
-                                                        const EdgeInsets.symmetric(
-                                                          horizontal: 12,
-                                                        ),
-                                                    height: 40,
-                                                    alignment: Alignment.center,
-                                                    child: Text(
-                                                      channel,
-                                                      style: TextStyle(
-                                                        fontSize: 14,
-                                                        fontWeight: selected
-                                                            ? FontWeight.w600
-                                                            : _channelsWithUnread
-                                                                    .contains(
-                                                                    channel,
-                                                                  )
-                                                                ? FontWeight.w600
-                                                                : FontWeight.normal,
-                                                        color: selected
-                                                            ? theme
-                                                                  .colorScheme
-                                                                  .primary
-                                                            : _channelsWithUnread
-                                                                    .contains(
-                                                                    channel,
-                                                                  )
-                                                                ? Colors.white
-                                                                : null,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                );
-                                              }).toList(),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      Positioned.fill(
-                                        child: IgnorePointer(
-                                          child: CustomPaint(
-                                            key: _underlineKey,
-                                            painter: ChannelUnderlinePainter(
-                                              scrollController:
-                                                  _channelScrollController,
-                                              pageController: _pageController,
-                                              itemPositions: _itemPositions,
-                                              itemWidths: _itemWidths,
-                                              selectedIndex:
-                                                  _selectedChannel == null
-                                                  ? -1
-                                                  : _channels.indexOf(
-                                                      _selectedChannel!,
-                                                    ),
-                                              color: theme.colorScheme.primary,
-                                              underlineAnimation: _underway
-                                                  ? _underlineCurve
-                                                  : null,
-                                              animStartContentX: _underway
-                                                  ? _animStartContentX
-                                                  : null,
-                                              animEndContentX: _underway
-                                                  ? _animEndContentX
-                                                  : null,
-                                              repaint: _underway
-                                                  ? Listenable.merge([
-                                                      _channelScrollController,
-                                                      _pageController,
-                                                      _underlineCurve,
-                                                    ])
-                                                  : Listenable.merge([
-                                                      _channelScrollController,
-                                                      _pageController,
-                                                    ]),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                                Expanded(
-                                  child: ScrollConfiguration(
-                                    behavior: ScrollConfiguration.of(context).copyWith(
-                                      dragDevices: {
-                                        PointerDeviceKind.touch,
-                                        PointerDeviceKind.mouse,
-                                        PointerDeviceKind.stylus,
-                                        PointerDeviceKind.unknown,
-                                      },
-                                    ),
-                                    child: NotificationListener<ScrollNotification>(
-                                      onNotification: _onPageScrollNotification,
-                                      child: PageView.builder(
-                                        controller: _pageController,
-                                        itemCount: _channels.length,
-                                        onPageChanged: (i) {
-                                          if (_programmaticPageChange) return;
-                                          setState(() {
-                                            _selectedChannel = _channels[i];
-                                            _openThreadRoot = null;
-                                            _showingMentions = false;
-                                            _channelsWithUnread.remove(
-                                              _channels[i],
-                                            );
-                                          });
-                                          _requestScrollToChannel(i);
-                                        },
-                                        itemBuilder: (_, i) =>
-                                            _buildChat(_channels[i]),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          ),
-                          if (_openThreadRoot != null)
-                            Positioned(
-                              left: 0,
-                              right: 0,
-                              top: 0,
-                              height: stackHeight,
-                              child: AnimatedBuilder(
-                                animation: _panelCurve,
-                                builder: (context, child) =>
-                                    Transform.translate(
-                                      offset: Offset(
-                                        0,
-                                        (1 - _panelCurve.value) * stackHeight,
-                                      ),
-                                      child: child,
-                                    ),
-                                child: _buildThreadPanel(),
-                              ),
-                            ),
-                          if (_showingMentions)
-                            Positioned(
-                              left: 0,
-                              right: 0,
-                              top: 0,
-                              height: stackHeight,
-                              child: AnimatedBuilder(
-                                animation: _panelCurve,
-                                builder: (context, child) =>
-                                    Transform.translate(
-                                      offset: Offset(
-                                        0,
-                                        (1 - _panelCurve.value) * stackHeight,
-                                      ),
-                                      child: child,
-                                    ),
-                                child: _buildMentionsPanel(),
-                              ),
-                            ),
-                        ],
-                      );
-                    },
-                  )
-                : _buildEmpty(),
-          ),
-          ColoredBox(
-            color: theme.scaffoldBackgroundColor,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _MessageInput(
-                  controller: _messageController,
-                  focusNode: _focusNode,
-                  onSend: _sendMessage,
-                  onSendLongPress: _onSendLongPress,
-                  replyToMsg: _replyToMsg,
-                  onCancelReply: () => setState(() => _replyToMsg = null),
-                  enabled: !_showingMentions && widget.twitchAuth.isConfigured,
-                  hintText: !widget.twitchAuth.isConfigured
-                      ? 'Connect an account to chat'
-                      : _openThreadRoot != null
-                      ? 'Reply to thread...'
-                      : _showingMentions
-                      ? 'Type a message...'
-                      : null,
-                ),
-                if (_chatStatus[_selectedChannel] != null &&
-                    _chatStatus[_selectedChannel]!.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(
-                      left: 12,
-                      right: 12,
-                      bottom: 4,
-                    ),
-                    child: Text(
-                      _chatStatus[_selectedChannel]!,
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
+          ],
+        ),
       ),
     );
   }
@@ -2102,6 +2159,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       text: msg.text,
       twitchPositions: msg.emotePositions,
       channelEmotes: channelEmotes,
+      onEmoteTap: _showEmoteSheet,
     );
     if (colored) {
       return [
@@ -2181,8 +2239,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     decoration: TextDecoration.none,
                   ),
                   recognizer: TapGestureRecognizer()
-                    ..onTap = () =>
-                        _showUserProfile(msg.username, msg.userId),
+                    ..onTap = () => _showUserProfile(msg.username, msg.userId),
                 ),
                 if (msg.isAction)
                   ..._buildMessageSpans(msg, channel, surface, colored: true)
@@ -2191,7 +2248,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ],
               useTextDecorationNone: true,
               isHighlighted: msg.isHighlighted,
-              replyIndicator: msg.replyToUser != null ? _buildReplyIndicator(msg) : null,
+              replyIndicator: msg.replyToUser != null
+                  ? _buildReplyIndicator(msg)
+                  : null,
               onLongPress: () => _showMessageMenu(msg),
             );
           }
@@ -2550,6 +2609,161 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
   }
 }
 
+class _EmoteSheet extends StatelessWidget {
+  final GenericEmote emote;
+  final TextEditingController messageController;
+  final FocusNode focusNode;
+  final VoidCallback onClose;
+
+  const _EmoteSheet({
+    required this.emote,
+    required this.messageController,
+    required this.focusNode,
+    required this.onClose,
+  });
+
+  String _typeLabel(GenericEmote emote) {
+    final scope = switch (emote.scope) {
+      EmoteScope.global => 'Global',
+      EmoteScope.channel => 'Channel',
+    };
+    final provider = switch (emote.type) {
+      EmoteType.twitch => 'Twitch',
+      EmoteType.bttv => 'BTTV',
+      EmoteType.ffz => 'FFZ',
+      EmoteType.sevenTv => '7TV',
+    };
+    return '$scope $provider emote';
+  }
+
+  String? _ownerLabel(GenericEmote emote) {
+    final owner = emote.ownerChannel;
+    if (owner == null) return null;
+    return 'Created by $owner';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 32,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[400],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.network(
+                  emote.url,
+                  width: 64,
+                  height: 64,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, _, _) => Container(
+                    width: 64,
+                    height: 64,
+                    color: theme.colorScheme.surfaceContainerHighest,
+                    child: Icon(
+                      Icons.image,
+                      size: 32,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      emote.code,
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: theme.colorScheme.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _typeLabel(emote),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    if (_ownerLabel(emote) != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        _ownerLabel(emote)!,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Divider(height: 1, color: theme.dividerColor),
+          const SizedBox(height: 4),
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.send),
+            title: const Text('Use emote'),
+            onTap: () {
+              onClose();
+              final text = messageController.text;
+              final suffix = text.isEmpty ? emote.code : ' $emote.code';
+              messageController.text = '$text$suffix';
+              messageController.selection = TextSelection.fromPosition(
+                TextPosition(offset: messageController.text.length),
+              );
+              focusNode.requestFocus();
+            },
+          ),
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.copy),
+            title: const Text('Copy'),
+            onTap: () {
+              Clipboard.setData(ClipboardData(text: emote.code));
+              onClose();
+            },
+          ),
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.open_in_new),
+            title: const Text('Open emote link'),
+            onTap: () {
+              onClose();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Emote link not yet available')),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _MessageInput extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
@@ -2661,7 +2875,9 @@ class _MessageInput extends StatelessWidget {
                       Icons.send,
                       color: enabled
                           ? Theme.of(context).colorScheme.primary
-                          : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.38),
+                          : Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withValues(alpha: 0.38),
                     ),
                   ),
                 ),

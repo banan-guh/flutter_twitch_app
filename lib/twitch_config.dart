@@ -22,7 +22,8 @@ class TwitchConfig {
   /// The WebView intercepts the redirect before the browser navigates, so
   /// this URL doesn't need to serve real content, but it must match exactly
   /// what Twitch has on file.
-  static const String redirectUri = 'https://banan-guh.github.io/twitch-app-oauth';
+  static const String redirectUri =
+      'https://banan-guh.github.io/twitch-app-oauth';
 
   static bool get isConfigured =>
       clientId.isNotEmpty && clientId != 'YOUR_CLIENT_ID_HERE';

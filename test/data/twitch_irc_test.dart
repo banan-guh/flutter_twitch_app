@@ -13,7 +13,8 @@ void main() {
     });
 
     test('parses CLEARCHAT with tags (timeout)', () {
-      const line = '@ban-duration=300;target-user-id=12345 :tmi.twitch.tv CLEARCHAT #xqc :forsen';
+      const line =
+          '@ban-duration=300;target-user-id=12345 :tmi.twitch.tv CLEARCHAT #xqc :forsen';
       final msg = parseIrcMessage(line);
       expect(msg, isNotNull);
       expect(msg!.command, 'CLEARCHAT');
@@ -38,7 +39,9 @@ void main() {
     });
 
     test('parses message with prefix only', () {
-      final msg = parseIrcMessage(':testuser!testuser@testuser.tmi.twitch.tv PRIVMSG #xqc :hello');
+      final msg = parseIrcMessage(
+        ':testuser!testuser@testuser.tmi.twitch.tv PRIVMSG #xqc :hello',
+      );
       expect(msg, isNotNull);
       expect(msg!.command, 'PRIVMSG');
       expect(msg.prefix, 'testuser!testuser@testuser.tmi.twitch.tv');
@@ -52,21 +55,29 @@ void main() {
     });
 
     test('handles message with spaces in trailing', () {
-      final msg = parseIrcMessage(':user!user@user.tmi.twitch.tv PRIVMSG #channel :hello world this is a test');
+      final msg = parseIrcMessage(
+        ':user!user@user.tmi.twitch.tv PRIVMSG #channel :hello world this is a test',
+      );
       expect(msg, isNotNull);
       expect(msg!.trailing, 'hello world this is a test');
     });
 
     test('parses NOTICE message', () {
-      final msg = parseIrcMessage(':tmi.twitch.tv NOTICE #xqc :This room requires a verified email account to chat.');
+      final msg = parseIrcMessage(
+        ':tmi.twitch.tv NOTICE #xqc :This room requires a verified email account to chat.',
+      );
       expect(msg, isNotNull);
       expect(msg!.command, 'NOTICE');
       expect(msg.params, ['#xqc']);
-      expect(msg.trailing, 'This room requires a verified email account to chat.');
+      expect(
+        msg.trailing,
+        'This room requires a verified email account to chat.',
+      );
     });
 
     test('parses NOTICE with tags', () {
-      const line = '@msg-id=slow_mode :tmi.twitch.tv NOTICE #xqc :You are sending messages too fast.';
+      const line =
+          '@msg-id=slow_mode :tmi.twitch.tv NOTICE #xqc :You are sending messages too fast.';
       final msg = parseIrcMessage(line);
       expect(msg, isNotNull);
       expect(msg!.command, 'NOTICE');

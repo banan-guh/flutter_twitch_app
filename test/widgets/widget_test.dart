@@ -14,8 +14,20 @@ import 'package:flutter_twitch_app/models/twitch_message.dart';
 
 class _FakeEventSubService extends EventSubService {
   final _statusCtrl = StreamController<EventSubStatus>.broadcast(sync: true);
-  final _deleteCtrl = StreamController<({String messageId, String targetUser, String channel})>.broadcast(sync: true);
-  final _banCtrl = StreamController<({String user, String? reason, bool isTimeout, String? duration, String channel})>.broadcast(sync: true);
+  final _deleteCtrl =
+      StreamController<
+        ({String messageId, String targetUser, String channel})
+      >.broadcast(sync: true);
+  final _banCtrl =
+      StreamController<
+        ({
+          String user,
+          String? reason,
+          bool isTimeout,
+          String? duration,
+          String channel,
+        })
+      >.broadcast(sync: true);
 
   @override
   Future<void> connect() async {}
@@ -24,16 +36,30 @@ class _FakeEventSubService extends EventSubService {
   Stream<EventSubStatus> get onStatus => _statusCtrl.stream;
 
   @override
-  Stream<({String messageId, String targetUser, String channel})> get onMessageDeleted => _deleteCtrl.stream;
+  Stream<({String messageId, String targetUser, String channel})>
+  get onMessageDeleted => _deleteCtrl.stream;
 
   @override
-  Stream<({String user, String? reason, bool isTimeout, String? duration, String channel})> get onBan => _banCtrl.stream;
+  Stream<
+    ({
+      String user,
+      String? reason,
+      bool isTimeout,
+      String? duration,
+      String channel,
+    })
+  >
+  get onBan => _banCtrl.stream;
 
   void triggerConnect() => _statusCtrl.add(EventSubStatus.connected);
   void triggerDisconnect() => _statusCtrl.add(EventSubStatus.disconnected);
 
   void emitDeleted(String messageId, String targetUser, String channel) {
-    _deleteCtrl.add((messageId: messageId, targetUser: targetUser, channel: channel));
+    _deleteCtrl.add((
+      messageId: messageId,
+      targetUser: targetUser,
+      channel: channel,
+    ));
   }
 
   void emitBan(
@@ -43,7 +69,13 @@ class _FakeEventSubService extends EventSubService {
     String? duration,
     String channel = '',
   }) {
-    _banCtrl.add((user: user, reason: reason, isTimeout: isTimeout, duration: duration, channel: channel));
+    _banCtrl.add((
+      user: user,
+      reason: reason,
+      isTimeout: isTimeout,
+      duration: duration,
+      channel: channel,
+    ));
   }
 
   @override
@@ -61,19 +93,27 @@ class _FakeRecentMessagesService extends RecentMessagesService {
     final now = DateTime.now();
     return [
       TwitchMessage(
-        username: 'alice', text: 'hello world', channel: channel,
+        username: 'alice',
+        text: 'hello world',
+        channel: channel,
         messageId: 'root-1',
         timestamp: now.subtract(const Duration(minutes: 5)),
       ),
       TwitchMessage(
-        username: 'bob', text: 'hi alice', channel: channel,
-        messageId: 'reply-1', replyToParentId: 'root-1',
-        replyToUser: 'alice', replyToText: 'hello world',
+        username: 'bob',
+        text: 'hi alice',
+        channel: channel,
+        messageId: 'reply-1',
+        replyToParentId: 'root-1',
+        replyToUser: 'alice',
+        replyToText: 'hello world',
         timestamp: now.subtract(const Duration(minutes: 4)),
         isHistory: true,
       ),
       TwitchMessage(
-        username: 'charlie', text: 'standalone post', channel: channel,
+        username: 'charlie',
+        text: 'standalone post',
+        channel: channel,
         messageId: 'standalone-1',
         timestamp: now.subtract(const Duration(minutes: 3)),
       ),
@@ -86,7 +126,10 @@ class _FakeIrcService extends IrcService {
   final _noticeCtrl = StreamController<IrcNoticeEvent>.broadcast(sync: true);
 
   @override
-  Future<void> connect({required String username, required String accessToken}) async {}
+  Future<void> connect({
+    required String username,
+    required String accessToken,
+  }) async {}
 
   @override
   void join(String channel) {}
@@ -103,7 +146,14 @@ class _FakeIrcService extends IrcService {
     int? durationSeconds,
     String channel = '',
   }) {
-    _banCtrl.add(IrcBanEvent(user: user, isTimeout: isTimeout, duration: durationSeconds, channel: channel));
+    _banCtrl.add(
+      IrcBanEvent(
+        user: user,
+        isTimeout: isTimeout,
+        duration: durationSeconds,
+        channel: channel,
+      ),
+    );
   }
 
   void emitNotice(String channel, String message) {
@@ -146,19 +196,23 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  testWidgets('Home screen shows credentials message when not configured',
-      (WidgetTester tester) async {
+  testWidgets('Home screen shows credentials message when not configured', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(const TwitchChatApp());
     await tester.pump();
 
     expect(find.byIcon(Icons.add), findsOneWidget);
     expect(find.byIcon(Icons.settings), findsOneWidget);
-    expect(find.text('Configure Twitch credentials in Settings first'),
-        findsOneWidget);
+    expect(
+      find.text('Configure Twitch credentials in Settings first'),
+      findsOneWidget,
+    );
   });
 
-  testWidgets('Plus button opens join channel dialog',
-      (WidgetTester tester) async {
+  testWidgets('Plus button opens join channel dialog', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(const TwitchChatApp());
     await tester.pump();
 
@@ -170,17 +224,20 @@ void main() {
     expect(find.text('Join'), findsOneWidget);
   });
 
-  testWidgets('Can send messages after adding channel without credentials',
-      (WidgetTester tester) async {
+  testWidgets('Can send messages after adding channel without credentials', (
+    WidgetTester tester,
+  ) async {
     final fakeEventSub = _TestEventSubService();
     final fakeIrc = _FakeIrcService();
     final fakeRecent = _FakeRecentMessagesService();
 
-    await tester.pumpWidget(TwitchChatApp(
-      eventSubService: fakeEventSub,
-      ircService: fakeIrc,
-      recentMessagesService: fakeRecent,
-    ));
+    await tester.pumpWidget(
+      TwitchChatApp(
+        eventSubService: fakeEventSub,
+        ircService: fakeIrc,
+        recentMessagesService: fakeRecent,
+      ),
+    );
     await tester.pump();
 
     await tester.tap(find.byIcon(Icons.add));
@@ -194,25 +251,30 @@ void main() {
 
     // Trying to send does nothing (input is disabled without credentials).
     await tester.enterText(
-        find.byKey(const Key('message_input')), 'hello chat');
+      find.byKey(const Key('message_input')),
+      'hello chat',
+    );
     await tester.tap(find.byIcon(Icons.send));
     await tester.pump();
     expect(find.textContaining('hello chat'), findsNothing);
 
     // EventSub messages still appear in view-only mode.
-    fakeEventSub.emitMessage(TwitchMessage(
-      username: 'xqc',
-      text: 'hello chat',
-      channel: 'xqc',
-      messageId: 'm1',
-    ));
+    fakeEventSub.emitMessage(
+      TwitchMessage(
+        username: 'xqc',
+        text: 'hello chat',
+        channel: 'xqc',
+        messageId: 'm1',
+      ),
+    );
     await tester.pump();
 
     expect(find.textContaining('hello chat'), findsOneWidget);
   });
 
-  testWidgets('Settings screen opens and shows dark mode toggle',
-      (WidgetTester tester) async {
+  testWidgets('Settings screen opens and shows dark mode toggle', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(const TwitchChatApp());
     await tester.pump();
 
@@ -225,8 +287,9 @@ void main() {
     expect(find.text('Login with Twitch'), findsOneWidget);
   });
 
-  testWidgets('Joining channel shows input bar and send button',
-      (WidgetTester tester) async {
+  testWidgets('Joining channel shows input bar and send button', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(const TwitchChatApp());
     await tester.pump();
 
@@ -240,8 +303,9 @@ void main() {
     expect(find.byKey(const Key('message_input')), findsOneWidget);
   });
 
-  testWidgets('Settings shows channel list when channels are joined',
-      (WidgetTester tester) async {
+  testWidgets('Settings shows channel list when channels are joined', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(const TwitchChatApp());
     await tester.pump();
 
@@ -258,8 +322,9 @@ void main() {
     expect(find.byIcon(Icons.remove_circle_outline), findsOneWidget);
   });
 
-  testWidgets('Shows notification bell without badge when no mentions',
-      (WidgetTester tester) async {
+  testWidgets('Shows notification bell without badge when no mentions', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(const TwitchChatApp());
     await tester.pump();
 
@@ -267,8 +332,9 @@ void main() {
     expect(find.byType(Badge), findsNothing);
   });
 
-  testWidgets('Notification bell opens mentions modal',
-      (WidgetTester tester) async {
+  testWidgets('Notification bell opens mentions modal', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(const TwitchChatApp());
     await tester.pump();
 
@@ -292,16 +358,19 @@ void main() {
     expect(find.text('Mentions / Whispers'), findsNothing);
   });
 
-  testWidgets('Adding second channel switches to it immediately',
-      (WidgetTester tester) async {
+  testWidgets('Adding second channel switches to it immediately', (
+    WidgetTester tester,
+  ) async {
     final fakeRecent = _FakeRecentMessagesService();
     final fakeIrc = _FakeIrcService();
     final fakeEventSub = _FakeEventSubService();
-    await tester.pumpWidget(TwitchChatApp(
-      recentMessagesService: fakeRecent,
-      ircService: fakeIrc,
-      eventSubService: fakeEventSub,
-    ));
+    await tester.pumpWidget(
+      TwitchChatApp(
+        recentMessagesService: fakeRecent,
+        ircService: fakeIrc,
+        eventSubService: fakeEventSub,
+      ),
+    );
     await tester.pump();
 
     await tester.tap(find.byIcon(Icons.add));
@@ -321,11 +390,10 @@ void main() {
     expect(find.byKey(const Key('message_input')), findsOneWidget);
   });
 
-  testWidgets('Shows Disconnected once when EventSub fails',
-      (WidgetTester tester) async {
-    SharedPreferences.setMockInitialValues({
-      'access_token': 'test_token',
-    });
+  testWidgets('Shows Disconnected once when EventSub fails', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({'access_token': 'test_token'});
     await tester.pumpWidget(const TwitchChatApp());
     await tester.pump();
 
@@ -337,12 +405,16 @@ void main() {
 
     await tester.pump(const Duration(seconds: 5));
 
-    final disconnectCount = find.textContaining('Disconnected').evaluate().length;
+    final disconnectCount = find
+        .textContaining('Disconnected')
+        .evaluate()
+        .length;
     expect(disconnectCount, lessThanOrEqualTo(1));
   });
 
-  testWidgets('Duplicate channel join is silently ignored',
-      (WidgetTester tester) async {
+  testWidgets('Duplicate channel join is silently ignored', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(const TwitchChatApp());
     await tester.pump();
 
@@ -363,16 +435,19 @@ void main() {
     expect(find.text('xqc'), findsOneWidget);
   });
 
-  testWidgets('Empty whitespace send does nothing',
-      (WidgetTester tester) async {
+  testWidgets('Empty whitespace send does nothing', (
+    WidgetTester tester,
+  ) async {
     final fakeRecent = _FakeRecentMessagesService();
     final fakeIrc = _FakeIrcService();
     final fakeEventSub = _FakeEventSubService();
-    await tester.pumpWidget(TwitchChatApp(
-      recentMessagesService: fakeRecent,
-      ircService: fakeIrc,
-      eventSubService: fakeEventSub,
-    ));
+    await tester.pumpWidget(
+      TwitchChatApp(
+        recentMessagesService: fakeRecent,
+        ircService: fakeIrc,
+        eventSubService: fakeEventSub,
+      ),
+    );
     await tester.pump();
 
     await tester.tap(find.byIcon(Icons.add));
@@ -386,17 +461,20 @@ void main() {
     expect(find.text('   '), findsNothing);
   });
 
-  testWidgets('Message timestamp shows HH:MM format',
-      (WidgetTester tester) async {
+  testWidgets('Message timestamp shows HH:MM format', (
+    WidgetTester tester,
+  ) async {
     final fakeEventSub = _TestEventSubService();
     final fakeIrc = _FakeIrcService();
     final fakeRecent = _FakeRecentMessagesService();
 
-    await tester.pumpWidget(TwitchChatApp(
-      eventSubService: fakeEventSub,
-      ircService: fakeIrc,
-      recentMessagesService: fakeRecent,
-    ));
+    await tester.pumpWidget(
+      TwitchChatApp(
+        eventSubService: fakeEventSub,
+        ircService: fakeIrc,
+        recentMessagesService: fakeRecent,
+      ),
+    );
     await tester.pump();
 
     await tester.tap(find.byIcon(Icons.add));
@@ -405,56 +483,59 @@ void main() {
     await tester.tap(find.text('Join'));
     await tester.pump();
 
-    await tester.enterText(
-        find.byKey(const Key('message_input')), 'hello');
+    await tester.enterText(find.byKey(const Key('message_input')), 'hello');
     await tester.tap(find.byIcon(Icons.send));
     await tester.pump();
 
-    fakeEventSub.emitMessage(TwitchMessage(
-      username: 'xqc',
-      text: 'hello',
-      channel: 'xqc',
-      messageId: 'm1',
-    ));
+    fakeEventSub.emitMessage(
+      TwitchMessage(
+        username: 'xqc',
+        text: 'hello',
+        channel: 'xqc',
+        messageId: 'm1',
+      ),
+    );
     await tester.pump();
 
     final timeText = find.textContaining(RegExp(r'^\d{2}:\d{2}$'));
     expect(timeText, findsAtLeast(1));
   });
 
-  testWidgets('Connected message appears after EventSub connects and history loads',
-      (WidgetTester tester) async {
-    final fakeEventSub = _FakeEventSubService();
-    final fakeRecent = _FakeRecentMessagesService();
-    final fakeIrc = _FakeIrcService();
+  testWidgets(
+    'Connected message appears after EventSub connects and history loads',
+    (WidgetTester tester) async {
+      final fakeEventSub = _FakeEventSubService();
+      final fakeRecent = _FakeRecentMessagesService();
+      final fakeIrc = _FakeIrcService();
 
-    SharedPreferences.setMockInitialValues({
-      'access_token': 'test_token',
-    });
+      SharedPreferences.setMockInitialValues({'access_token': 'test_token'});
 
-    await tester.pumpWidget(TwitchChatApp(
-      eventSubService: fakeEventSub,
-      recentMessagesService: fakeRecent,
-      ircService: fakeIrc,
-    ));
-    await tester.pump();
+      await tester.pumpWidget(
+        TwitchChatApp(
+          eventSubService: fakeEventSub,
+          recentMessagesService: fakeRecent,
+          ircService: fakeIrc,
+        ),
+      );
+      await tester.pump();
 
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).last, 'testchannel');
-    await tester.tap(find.text('Join'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.add));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).last, 'testchannel');
+      await tester.tap(find.text('Join'));
+      await tester.pumpAndSettle();
 
-    expect(find.textContaining('Connected'), findsNothing);
+      expect(find.textContaining('Connected'), findsNothing);
 
-    fakeEventSub.triggerConnect();
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 600));
-    await tester.pump();
+      fakeEventSub.triggerConnect();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump();
 
-    expect(find.textContaining('Connected'), findsOneWidget);
-    expect(find.textContaining('Disconnected'), findsNothing);
-  });
+      expect(find.textContaining('Connected'), findsOneWidget);
+      expect(find.textContaining('Disconnected'), findsNothing);
+    },
+  );
 
   group('Thread', () {
     late DateTime now;
@@ -464,19 +545,23 @@ void main() {
       now = DateTime.now();
     });
 
-    Future<void> joinChannel(WidgetTester tester,
-        {required String channelName,
-        required List<TwitchMessage> history,
-        _FakeEventSubService? eventSub}) async {
+    Future<void> joinChannel(
+      WidgetTester tester, {
+      required String channelName,
+      required List<TwitchMessage> history,
+      _FakeEventSubService? eventSub,
+    }) async {
       final fakeIrc = _FakeIrcService();
       final fakeRecent = _ConfigurableRecentMessagesService(history);
       final es = eventSub ?? _FakeEventSubService();
 
-      await tester.pumpWidget(TwitchChatApp(
-        eventSubService: es,
-        recentMessagesService: fakeRecent,
-        ircService: fakeIrc,
-      ));
+      await tester.pumpWidget(
+        TwitchChatApp(
+          eventSubService: es,
+          recentMessagesService: fakeRecent,
+          ircService: fakeIrc,
+        ),
+      );
       await tester.pump();
 
       await tester.tap(find.byIcon(Icons.add));
@@ -488,42 +573,64 @@ void main() {
     }
 
     testWidgets(
-        'reply indicator on history child opens thread showing parent and child',
-        (WidgetTester tester) async {
+      'reply indicator on history child opens thread showing parent and child',
+      (WidgetTester tester) async {
+        const channel = 'testchannel';
+        final parent = TwitchMessage(
+          username: 'alice',
+          text: 'parent msg',
+          messageId: 'p1',
+          timestamp: now.subtract(const Duration(minutes: 5)),
+          channel: channel,
+        );
+        final child = TwitchMessage(
+          username: 'bob',
+          text: 'child msg',
+          messageId: 'c1',
+          replyToParentId: 'p1',
+          replyToUser: 'alice',
+          replyToText: 'parent msg',
+          timestamp: now.subtract(const Duration(minutes: 4)),
+          isHistory: true,
+          channel: channel,
+        );
+        await joinChannel(
+          tester,
+          channelName: channel,
+          history: [parent, child],
+        );
+
+        await tester.tap(find.textContaining('replying to alice: parent msg'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Reply Thread'), findsOneWidget);
+        expect(find.byIcon(Icons.close), findsOneWidget);
+        expect(find.textContaining('parent msg'), findsAtLeast(1));
+        expect(find.textContaining('child msg'), findsAtLeast(1));
+      },
+    );
+
+    testWidgets('long-press view thread on history child opens thread modal', (
+      WidgetTester tester,
+    ) async {
       const channel = 'testchannel';
       final parent = TwitchMessage(
-        username: 'alice', text: 'parent msg', messageId: 'p1',
-        timestamp: now.subtract(const Duration(minutes: 5)), channel: channel,
+        username: 'alice',
+        text: 'parent msg',
+        messageId: 'p1',
+        timestamp: now.subtract(const Duration(minutes: 5)),
+        channel: channel,
       );
       final child = TwitchMessage(
-        username: 'bob', text: 'child msg', messageId: 'c1',
-        replyToParentId: 'p1', replyToUser: 'alice', replyToText: 'parent msg',
+        username: 'bob',
+        text: 'child msg',
+        messageId: 'c1',
+        replyToParentId: 'p1',
+        replyToUser: 'alice',
+        replyToText: 'parent msg',
         timestamp: now.subtract(const Duration(minutes: 4)),
-        isHistory: true, channel: channel,
-      );
-      await joinChannel(tester, channelName: channel, history: [parent, child]);
-
-      await tester.tap(find.textContaining('replying to alice: parent msg'));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Reply Thread'), findsOneWidget);
-      expect(find.byIcon(Icons.close), findsOneWidget);
-      expect(find.textContaining('parent msg'), findsAtLeast(1));
-      expect(find.textContaining('child msg'), findsAtLeast(1));
-    });
-
-    testWidgets('long-press view thread on history child opens thread modal',
-        (WidgetTester tester) async {
-      const channel = 'testchannel';
-      final parent = TwitchMessage(
-        username: 'alice', text: 'parent msg', messageId: 'p1',
-        timestamp: now.subtract(const Duration(minutes: 5)), channel: channel,
-      );
-      final child = TwitchMessage(
-        username: 'bob', text: 'child msg', messageId: 'c1',
-        replyToParentId: 'p1', replyToUser: 'alice', replyToText: 'parent msg',
-        timestamp: now.subtract(const Duration(minutes: 4)),
-        isHistory: true, channel: channel,
+        isHistory: true,
+        channel: channel,
       );
       await joinChannel(tester, channelName: channel, history: [parent, child]);
 
@@ -539,195 +646,275 @@ void main() {
     });
 
     testWidgets(
-        'long-press view thread on parent with children opens thread with all messages',
-        (WidgetTester tester) async {
+      'long-press view thread on parent with children opens thread with all messages',
+      (WidgetTester tester) async {
+        const channel = 'testchannel';
+        final parent = TwitchMessage(
+          username: 'alice',
+          text: 'parent msg',
+          messageId: 'p1',
+          timestamp: now.subtract(const Duration(minutes: 5)),
+          channel: channel,
+        );
+        final child1 = TwitchMessage(
+          username: 'bob',
+          text: 'child one',
+          messageId: 'c1',
+          replyToParentId: 'p1',
+          replyToUser: 'alice',
+          replyToText: 'parent preview',
+          timestamp: now.subtract(const Duration(minutes: 4)),
+          isHistory: true,
+          channel: channel,
+        );
+        final child2 = TwitchMessage(
+          username: 'charlie',
+          text: 'child two',
+          messageId: 'c2',
+          replyToParentId: 'p1',
+          replyToUser: 'alice',
+          replyToText: 'parent preview',
+          timestamp: now.subtract(const Duration(minutes: 3)),
+          isHistory: true,
+          channel: channel,
+        );
+        await joinChannel(
+          tester,
+          channelName: channel,
+          history: [parent, child1, child2],
+        );
+
+        await tester.longPress(find.textContaining('alice: parent msg'));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('View thread'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Reply Thread'), findsOneWidget);
+        expect(find.textContaining('parent msg'), findsAtLeast(1));
+        expect(find.textContaining('child one'), findsAtLeast(1));
+        expect(find.textContaining('child two'), findsAtLeast(1));
+      },
+    );
+
+    testWidgets(
+      'long-press on standalone message does not show view thread option',
+      (WidgetTester tester) async {
+        const channel = 'testchannel';
+        final standalone = TwitchMessage(
+          username: 'charlie',
+          text: 'standalone msg',
+          messageId: 's1',
+          timestamp: now.subtract(const Duration(minutes: 3)),
+          channel: channel,
+        );
+        await joinChannel(tester, channelName: channel, history: [standalone]);
+
+        await tester.longPress(find.textContaining('charlie: standalone msg'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('View thread'), findsNothing);
+        expect(find.text('Reply to message'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'live EventSub reply to history parent opens thread via reply indicator',
+      (WidgetTester tester) async {
+        const channel = 'testchannel';
+        final parent = TwitchMessage(
+          username: 'alice',
+          text: 'original post',
+          messageId: 'p1',
+          timestamp: now.subtract(const Duration(minutes: 5)),
+          channel: channel,
+        );
+        final eventSub = _TestEventSubService();
+
+        SharedPreferences.setMockInitialValues({'access_token': 'test_token'});
+        await joinChannel(
+          tester,
+          channelName: channel,
+          history: [parent],
+          eventSub: eventSub,
+        );
+
+        eventSub.emitMessage(
+          TwitchMessage(
+            username: 'dave',
+            text: 'live reply text',
+            messageId: 'live1',
+            channel: channel,
+            replyToParentId: 'p1',
+            replyToUser: 'alice',
+            replyToText: 'original post',
+          ),
+        );
+        await tester.pump();
+
+        await tester.tap(
+          find.textContaining('replying to alice: original post'),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Reply Thread'), findsOneWidget);
+        expect(find.textContaining('original post'), findsAtLeast(1));
+        expect(find.textContaining('live reply text'), findsAtLeast(1));
+      },
+    );
+
+    testWidgets(
+      'reply indicator on 3-level deep chain opens thread with all messages',
+      (WidgetTester tester) async {
+        const channel = 'testchannel';
+        final root = TwitchMessage(
+          username: 'alice',
+          text: 'root level',
+          messageId: 'd1',
+          timestamp: now.subtract(const Duration(minutes: 7)),
+          channel: channel,
+        );
+        final mid = TwitchMessage(
+          username: 'bob',
+          text: 'mid level',
+          messageId: 'd2',
+          replyToParentId: 'd1',
+          replyToUser: 'alice',
+          replyToText: 'root level',
+          timestamp: now.subtract(const Duration(minutes: 5)),
+          isHistory: true,
+          channel: channel,
+        );
+        final leaf = TwitchMessage(
+          username: 'charlie',
+          text: 'leaf level',
+          messageId: 'd3',
+          replyToParentId: 'd2',
+          replyToUser: 'bob',
+          replyToText: 'mid level',
+          timestamp: now.subtract(const Duration(minutes: 3)),
+          isHistory: true,
+          channel: channel,
+        );
+        await joinChannel(
+          tester,
+          channelName: channel,
+          history: [root, mid, leaf],
+        );
+
+        await tester.tap(find.textContaining('replying to bob: mid level'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Reply Thread'), findsOneWidget);
+        expect(find.textContaining('root level'), findsAtLeast(1));
+        expect(find.textContaining('mid level'), findsAtLeast(1));
+        expect(find.textContaining('leaf level'), findsAtLeast(1));
+      },
+    );
+
+    testWidgets(
+      'reply indicator on orphan reply opens thread showing the orphan alone',
+      (WidgetTester tester) async {
+        const channel = 'testchannel';
+        final orphan = TwitchMessage(
+          username: 'bob',
+          text: 'orphan msg',
+          messageId: 'o1',
+          replyToParentId: 'nonexistent',
+          replyToUser: 'unknown_user',
+          replyToText: 'missing text',
+          timestamp: now.subtract(const Duration(minutes: 4)),
+          isHistory: true,
+          channel: channel,
+        );
+        await joinChannel(tester, channelName: channel, history: [orphan]);
+
+        await tester.tap(
+          find.textContaining('replying to unknown_user: missing text'),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Reply Thread'), findsOneWidget);
+        expect(find.textContaining('orphan msg'), findsAtLeast(1));
+      },
+    );
+
+    testWidgets(
+      'sent reply to history parent opens thread via reply indicator',
+      (WidgetTester tester) async {
+        const channel = 'testchannel';
+        final parent = TwitchMessage(
+          username: 'alice',
+          text: 'original msg',
+          messageId: 'p1',
+          timestamp: now.subtract(const Duration(minutes: 5)),
+          channel: channel,
+        );
+        final eventSub = _TestEventSubService();
+        await joinChannel(
+          tester,
+          channelName: channel,
+          history: [parent],
+          eventSub: eventSub,
+        );
+
+        await tester.longPress(find.textContaining('alice: original msg'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Reply to message'));
+        await tester.pumpAndSettle();
+
+        // Send is disabled without credentials; emit a reply via EventSub.
+        // Verify the history message is rendered first.
+        expect(find.textContaining('alice: original msg'), findsOneWidget);
+
+        eventSub.emitMessage(
+          TwitchMessage(
+            username: 'bob',
+            text: 'my reply',
+            channel: channel,
+            messageId: 'sent1',
+            replyToParentId: 'p1',
+            replyToUser: 'alice',
+            replyToText: 'original msg',
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+
+        expect(find.textContaining('my reply'), findsOneWidget);
+
+        await tester.tap(
+          find.textContaining('replying to alice: original msg'),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Reply Thread'), findsOneWidget);
+        expect(find.textContaining('original msg'), findsAtLeast(1));
+        expect(find.textContaining('my reply'), findsAtLeast(1));
+      },
+    );
+
+    testWidgets('long-press message inside thread panel opens context menu', (
+      WidgetTester tester,
+    ) async {
       const channel = 'testchannel';
       final parent = TwitchMessage(
-        username: 'alice', text: 'parent msg', messageId: 'p1',
-        timestamp: now.subtract(const Duration(minutes: 5)), channel: channel,
-      );
-      final child1 = TwitchMessage(
-        username: 'bob', text: 'child one', messageId: 'c1',
-        replyToParentId: 'p1', replyToUser: 'alice', replyToText: 'parent preview',
-        timestamp: now.subtract(const Duration(minutes: 4)),
-        isHistory: true, channel: channel,
-      );
-      final child2 = TwitchMessage(
-        username: 'charlie', text: 'child two', messageId: 'c2',
-        replyToParentId: 'p1', replyToUser: 'alice', replyToText: 'parent preview',
-        timestamp: now.subtract(const Duration(minutes: 3)),
-        isHistory: true, channel: channel,
-      );
-      await joinChannel(
-          tester, channelName: channel, history: [parent, child1, child2]);
-
-      await tester.longPress(find.textContaining('alice: parent msg'));
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.text('View thread'));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Reply Thread'), findsOneWidget);
-      expect(find.textContaining('parent msg'), findsAtLeast(1));
-      expect(find.textContaining('child one'), findsAtLeast(1));
-      expect(find.textContaining('child two'), findsAtLeast(1));
-    });
-
-    testWidgets(
-        'long-press on standalone message does not show view thread option',
-        (WidgetTester tester) async {
-      const channel = 'testchannel';
-      final standalone = TwitchMessage(
-        username: 'charlie', text: 'standalone msg', messageId: 's1',
-        timestamp: now.subtract(const Duration(minutes: 3)), channel: channel,
-      );
-      await joinChannel(
-          tester, channelName: channel, history: [standalone]);
-
-      await tester.longPress(find.textContaining('charlie: standalone msg'));
-      await tester.pumpAndSettle();
-
-      expect(find.text('View thread'), findsNothing);
-      expect(find.text('Reply to message'), findsOneWidget);
-    });
-
-    testWidgets(
-        'live EventSub reply to history parent opens thread via reply indicator',
-        (WidgetTester tester) async {
-      const channel = 'testchannel';
-      final parent = TwitchMessage(
-        username: 'alice', text: 'original post', messageId: 'p1',
-        timestamp: now.subtract(const Duration(minutes: 5)), channel: channel,
-      );
-      final eventSub = _TestEventSubService();
-
-      SharedPreferences.setMockInitialValues({'access_token': 'test_token'});
-      await joinChannel(
-          tester, channelName: channel, history: [parent], eventSub: eventSub);
-
-      eventSub.emitMessage(TwitchMessage(
-        username: 'dave', text: 'live reply text', messageId: 'live1',
-        channel: channel, replyToParentId: 'p1',
-        replyToUser: 'alice', replyToText: 'original post',
-      ));
-      await tester.pump();
-
-      await tester.tap(find.textContaining('replying to alice: original post'));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Reply Thread'), findsOneWidget);
-      expect(find.textContaining('original post'), findsAtLeast(1));
-      expect(find.textContaining('live reply text'), findsAtLeast(1));
-    });
-
-    testWidgets(
-        'reply indicator on 3-level deep chain opens thread with all messages',
-        (WidgetTester tester) async {
-      const channel = 'testchannel';
-      final root = TwitchMessage(
-        username: 'alice', text: 'root level', messageId: 'd1',
-        timestamp: now.subtract(const Duration(minutes: 7)), channel: channel,
-      );
-      final mid = TwitchMessage(
-        username: 'bob', text: 'mid level', messageId: 'd2',
-        replyToParentId: 'd1', replyToUser: 'alice', replyToText: 'root level',
+        username: 'alice',
+        text: 'parent msg',
+        messageId: 'p1',
         timestamp: now.subtract(const Duration(minutes: 5)),
-        isHistory: true, channel: channel,
-      );
-      final leaf = TwitchMessage(
-        username: 'charlie', text: 'leaf level', messageId: 'd3',
-        replyToParentId: 'd2', replyToUser: 'bob', replyToText: 'mid level',
-        timestamp: now.subtract(const Duration(minutes: 3)),
-        isHistory: true, channel: channel,
-      );
-      await joinChannel(
-          tester, channelName: channel, history: [root, mid, leaf]);
-
-      await tester.tap(find.textContaining('replying to bob: mid level'));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Reply Thread'), findsOneWidget);
-      expect(find.textContaining('root level'), findsAtLeast(1));
-      expect(find.textContaining('mid level'), findsAtLeast(1));
-      expect(find.textContaining('leaf level'), findsAtLeast(1));
-    });
-
-    testWidgets(
-        'reply indicator on orphan reply opens thread showing the orphan alone',
-        (WidgetTester tester) async {
-      const channel = 'testchannel';
-      final orphan = TwitchMessage(
-        username: 'bob', text: 'orphan msg', messageId: 'o1',
-        replyToParentId: 'nonexistent', replyToUser: 'unknown_user',
-        replyToText: 'missing text',
-        timestamp: now.subtract(const Duration(minutes: 4)),
-        isHistory: true, channel: channel,
-      );
-      await joinChannel(
-          tester, channelName: channel, history: [orphan]);
-
-      await tester.tap(find.textContaining('replying to unknown_user: missing text'));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Reply Thread'), findsOneWidget);
-      expect(find.textContaining('orphan msg'), findsAtLeast(1));
-    });
-
-    testWidgets(
-        'sent reply to history parent opens thread via reply indicator',
-        (WidgetTester tester) async {
-      const channel = 'testchannel';
-      final parent = TwitchMessage(
-        username: 'alice', text: 'original msg', messageId: 'p1',
-        timestamp: now.subtract(const Duration(minutes: 5)), channel: channel,
-      );
-      final eventSub = _TestEventSubService();
-      await joinChannel(
-          tester, channelName: channel, history: [parent], eventSub: eventSub);
-
-      await tester.longPress(find.textContaining('alice: original msg'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Reply to message'));
-      await tester.pumpAndSettle();
-
-      // Send is disabled without credentials; emit a reply via EventSub.
-      // Verify the history message is rendered first.
-      expect(find.textContaining('alice: original msg'), findsOneWidget);
-
-      eventSub.emitMessage(TwitchMessage(
-        username: 'bob',
-        text: 'my reply',
         channel: channel,
-        messageId: 'sent1',
-        replyToParentId: 'p1',
-        replyToUser: 'alice',
-        replyToText: 'original msg',
-      ));
-      await tester.pump();
-      await tester.pump();
-
-      expect(find.textContaining('my reply'), findsOneWidget);
-
-      await tester.tap(find.textContaining('replying to alice: original msg'));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Reply Thread'), findsOneWidget);
-      expect(find.textContaining('original msg'), findsAtLeast(1));
-      expect(find.textContaining('my reply'), findsAtLeast(1));
-    });
-
-    testWidgets('long-press message inside thread panel opens context menu',
-        (WidgetTester tester) async {
-      const channel = 'testchannel';
-      final parent = TwitchMessage(
-        username: 'alice', text: 'parent msg', messageId: 'p1',
-        timestamp: now.subtract(const Duration(minutes: 5)), channel: channel,
       );
       final child = TwitchMessage(
-        username: 'bob', text: 'child msg', messageId: 'c1',
-        replyToParentId: 'p1', replyToUser: 'alice', replyToText: 'parent msg',
+        username: 'bob',
+        text: 'child msg',
+        messageId: 'c1',
+        replyToParentId: 'p1',
+        replyToUser: 'alice',
+        replyToText: 'parent msg',
         timestamp: now.subtract(const Duration(minutes: 4)),
-        isHistory: true, channel: channel,
+        isHistory: true,
+        channel: channel,
       );
       await joinChannel(tester, channelName: channel, history: [parent, child]);
 
@@ -754,11 +941,13 @@ void main() {
       SharedPreferences.setMockInitialValues({'access_token': 'test_token'});
       final fakeRecent = _FakeRecentMessagesService();
 
-      await tester.pumpWidget(TwitchChatApp(
-        eventSubService: eventSub,
-        recentMessagesService: fakeRecent,
-        ircService: irc,
-      ));
+      await tester.pumpWidget(
+        TwitchChatApp(
+          eventSubService: eventSub,
+          recentMessagesService: fakeRecent,
+          ircService: irc,
+        ),
+      );
       await tester.pump();
 
       await tester.tap(find.byIcon(Icons.add));
@@ -769,8 +958,9 @@ void main() {
       await tester.pump();
     }
 
-    testWidgets('permanent ban shows "user was banned" message',
-        (WidgetTester tester) async {
+    testWidgets('permanent ban shows "user was banned" message', (
+      WidgetTester tester,
+    ) async {
       final eventSub = _FakeEventSubService();
       final irc = _FakeIrcService();
       await setupChannel(tester, eventSub: eventSub, irc: irc);
@@ -781,20 +971,30 @@ void main() {
       expect(find.textContaining('baduser was banned'), findsOneWidget);
     });
 
-    testWidgets('timeout with duration shows "timed out for Xs"',
-        (WidgetTester tester) async {
+    testWidgets('timeout with duration shows "timed out for Xs"', (
+      WidgetTester tester,
+    ) async {
       final eventSub = _FakeEventSubService();
       final irc = _FakeIrcService();
       await setupChannel(tester, eventSub: eventSub, irc: irc);
 
-      irc.emitBan('spammer', isTimeout: true, durationSeconds: 300, channel: 'testchannel');
+      irc.emitBan(
+        'spammer',
+        isTimeout: true,
+        durationSeconds: 300,
+        channel: 'testchannel',
+      );
       await tester.pump();
 
-      expect(find.textContaining('spammer was timed out for 300'), findsOneWidget);
+      expect(
+        find.textContaining('spammer was timed out for 300'),
+        findsOneWidget,
+      );
     });
 
-    testWidgets('timeout without duration shows "timed out"',
-        (WidgetTester tester) async {
+    testWidgets('timeout without duration shows "timed out"', (
+      WidgetTester tester,
+    ) async {
       final eventSub = _FakeEventSubService();
       final irc = _FakeIrcService();
       await setupChannel(tester, eventSub: eventSub, irc: irc);
@@ -806,8 +1006,7 @@ void main() {
       expect(find.textContaining('for '), findsNothing);
     });
 
-    testWidgets('notice shows the notice text',
-        (WidgetTester tester) async {
+    testWidgets('notice shows the notice text', (WidgetTester tester) async {
       final eventSub = _FakeEventSubService();
       final irc = _FakeIrcService();
       await setupChannel(tester, eventSub: eventSub, irc: irc);
@@ -816,12 +1015,14 @@ void main() {
       await tester.pump();
 
       expect(
-          find.textContaining('This room requires a verified email.'),
-          findsOneWidget);
+        find.textContaining('This room requires a verified email.'),
+        findsOneWidget,
+      );
     });
 
-    testWidgets('message deletion shows "A message from X was deleted"',
-        (WidgetTester tester) async {
+    testWidgets('message deletion shows "A message from X was deleted"', (
+      WidgetTester tester,
+    ) async {
       final eventSub = _FakeEventSubService();
       final irc = _FakeIrcService();
       await setupChannel(tester, eventSub: eventSub, irc: irc);
@@ -829,13 +1030,16 @@ void main() {
       eventSub.emitDeleted('root-1', 'alice', 'testchannel');
       await tester.pump();
 
-      expect(find.textContaining('A message from alice was deleted'),
-          findsOneWidget);
+      expect(
+        find.textContaining('A message from alice was deleted'),
+        findsOneWidget,
+      );
       expect(find.textContaining('hello world'), findsAtLeast(1));
     });
 
-    testWidgets('connected appears only once when EventSub connects',
-        (WidgetTester tester) async {
+    testWidgets('connected appears only once when EventSub connects', (
+      WidgetTester tester,
+    ) async {
       final eventSub = _FakeEventSubService();
       final irc = _FakeIrcService();
       await setupChannel(tester, eventSub: eventSub, irc: irc);
@@ -855,8 +1059,7 @@ void main() {
       expect(find.textContaining('Connected'), findsOneWidget);
     });
 
-    testWidgets('disconnected appears only once',
-        (WidgetTester tester) async {
+    testWidgets('disconnected appears only once', (WidgetTester tester) async {
       final eventSub = _FakeEventSubService();
       final irc = _FakeIrcService();
       await setupChannel(tester, eventSub: eventSub, irc: irc);
@@ -883,10 +1086,11 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       final auth = TwitchAuth();
 
-      await tester.pumpWidget(MaterialApp(home: SettingsScreen(
-        twitchAuth: auth,
-        onThemeChanged: (_) {},
-      )));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SettingsScreen(twitchAuth: auth, onThemeChanged: (_) {}),
+        ),
+      );
       await tester.pump();
 
       expect(find.text('Settings'), findsOneWidget);
@@ -895,16 +1099,17 @@ void main() {
       expect(find.text('Connected to Twitch'), findsNothing);
     });
 
-    testWidgets('success state shows connected and disconnect button',
-        (WidgetTester tester) async {
+    testWidgets('success state shows connected and disconnect button', (
+      WidgetTester tester,
+    ) async {
       SharedPreferences.setMockInitialValues({});
-      final auth = TwitchAuth()
-        ..accessToken = 'test-token';
+      final auth = TwitchAuth()..accessToken = 'test-token';
 
-      await tester.pumpWidget(MaterialApp(home: SettingsScreen(
-        twitchAuth: auth,
-        onThemeChanged: (_) {},
-      )));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SettingsScreen(twitchAuth: auth, onThemeChanged: (_) {}),
+        ),
+      );
       await tester.pump();
 
       expect(find.text('Connected to Twitch'), findsOneWidget);
@@ -912,16 +1117,15 @@ void main() {
       expect(find.text('Login with Twitch'), findsNothing);
     });
 
-    testWidgets('disconnect transitions to idle',
-        (WidgetTester tester) async {
+    testWidgets('disconnect transitions to idle', (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({});
-      final auth = TwitchAuth()
-        ..accessToken = 'test-token';
+      final auth = TwitchAuth()..accessToken = 'test-token';
 
-      await tester.pumpWidget(MaterialApp(home: SettingsScreen(
-        twitchAuth: auth,
-        onThemeChanged: (_) {},
-      )));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SettingsScreen(twitchAuth: auth, onThemeChanged: (_) {}),
+        ),
+      );
       await tester.pump();
 
       expect(find.text('Connected to Twitch'), findsOneWidget);
@@ -934,17 +1138,22 @@ void main() {
       expect(find.text('Login with Twitch'), findsOneWidget);
     });
 
-    testWidgets('dark mode toggle calls onThemeChanged',
-        (WidgetTester tester) async {
+    testWidgets('dark mode toggle calls onThemeChanged', (
+      WidgetTester tester,
+    ) async {
       SharedPreferences.setMockInitialValues({});
       ThemeMode? changed;
       final auth = TwitchAuth();
 
-      await tester.pumpWidget(MaterialApp(home: SettingsScreen(
-        twitchAuth: auth,
-        onThemeChanged: (mode) => changed = mode,
-        channelNotifier: ValueNotifier(['testchannel']),
-      )));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SettingsScreen(
+            twitchAuth: auth,
+            onThemeChanged: (mode) => changed = mode,
+            channelNotifier: ValueNotifier(['testchannel']),
+          ),
+        ),
+      );
       await tester.pump();
 
       await tester.tap(find.byType(SwitchListTile));
@@ -953,17 +1162,22 @@ void main() {
       expect(changed, ThemeMode.dark);
     });
 
-    testWidgets('channel list shows joined channels',
-        (WidgetTester tester) async {
+    testWidgets('channel list shows joined channels', (
+      WidgetTester tester,
+    ) async {
       SharedPreferences.setMockInitialValues({});
       final auth = TwitchAuth();
 
-      await tester.pumpWidget(MaterialApp(home: SettingsScreen(
-        twitchAuth: auth,
-        onThemeChanged: (_) {},
-        channelNotifier: ValueNotifier(['channel1', 'channel2']),
-        onLeaveChannel: (_) {},
-      )));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SettingsScreen(
+            twitchAuth: auth,
+            onThemeChanged: (_) {},
+            channelNotifier: ValueNotifier(['channel1', 'channel2']),
+            onLeaveChannel: (_) {},
+          ),
+        ),
+      );
       await tester.pump();
 
       expect(find.text('channel1'), findsOneWidget);
@@ -971,33 +1185,43 @@ void main() {
       expect(find.byIcon(Icons.remove_circle_outline), findsNWidgets(2));
     });
 
-    testWidgets('channel list is empty when no channels joined',
-        (WidgetTester tester) async {
+    testWidgets('channel list is empty when no channels joined', (
+      WidgetTester tester,
+    ) async {
       SharedPreferences.setMockInitialValues({});
       final auth = TwitchAuth();
 
-      await tester.pumpWidget(MaterialApp(home: SettingsScreen(
-        twitchAuth: auth,
-        onThemeChanged: (_) {},
-        channelNotifier: ValueNotifier([]),
-      )));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SettingsScreen(
+            twitchAuth: auth,
+            onThemeChanged: (_) {},
+            channelNotifier: ValueNotifier([]),
+          ),
+        ),
+      );
       await tester.pump();
 
       expect(find.text('No channels joined'), findsOneWidget);
     });
 
-    testWidgets('join channel dialog opens from settings',
-        (WidgetTester tester) async {
+    testWidgets('join channel dialog opens from settings', (
+      WidgetTester tester,
+    ) async {
       SharedPreferences.setMockInitialValues({});
       String? addedChannel;
       final auth = TwitchAuth();
 
-      await tester.pumpWidget(MaterialApp(home: SettingsScreen(
-        twitchAuth: auth,
-        onThemeChanged: (_) {},
-        channelNotifier: ValueNotifier([]),
-        onAddChannel: (ch) => addedChannel = ch,
-      )));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SettingsScreen(
+            twitchAuth: auth,
+            onThemeChanged: (_) {},
+            channelNotifier: ValueNotifier([]),
+            onAddChannel: (ch) => addedChannel = ch,
+          ),
+        ),
+      );
       await tester.pump();
 
       await tester.tap(find.text('Join channel'));
@@ -1016,11 +1240,13 @@ void main() {
   });
 
   group('Message cutoff', () {
-    Future<void> joinChannel(WidgetTester tester,
-        {required String channelName,
-        required List<TwitchMessage> history,
-        _FakeEventSubService? eventSub,
-        int maxMessages = 500}) async {
+    Future<void> joinChannel(
+      WidgetTester tester, {
+      required String channelName,
+      required List<TwitchMessage> history,
+      _FakeEventSubService? eventSub,
+      int maxMessages = 500,
+    }) async {
       SharedPreferences.setMockInitialValues({
         'max_messages_per_channel': maxMessages,
       });
@@ -1028,11 +1254,13 @@ void main() {
       final fakeRecent = _ConfigurableRecentMessagesService(history);
       final es = eventSub ?? _FakeEventSubService();
 
-      await tester.pumpWidget(TwitchChatApp(
-        eventSubService: es,
-        recentMessagesService: fakeRecent,
-        ircService: fakeIrc,
-      ));
+      await tester.pumpWidget(
+        TwitchChatApp(
+          eventSubService: es,
+          recentMessagesService: fakeRecent,
+          ircService: fakeIrc,
+        ),
+      );
       await tester.pump();
 
       await tester.tap(find.byIcon(Icons.add));
@@ -1043,20 +1271,28 @@ void main() {
       await tester.pump();
     }
 
-    testWidgets('truncates non-thread messages when exceeding limit',
-        (WidgetTester tester) async {
+    testWidgets('truncates non-thread messages when exceeding limit', (
+      WidgetTester tester,
+    ) async {
       const channel = 'testchannel';
       final history = List.generate(
         15,
         (i) => TwitchMessage(
-          username: 'user$i', text: 'msg $i', messageId: 'm$i',
+          username: 'user$i',
+          text: 'msg $i',
+          messageId: 'm$i',
           timestamp: DateTime.now().subtract(Duration(minutes: 15 - i)),
           channel: channel,
         ),
       );
       final eventSub = _TestEventSubService();
-      await joinChannel(tester, channelName: channel, history: history,
-          eventSub: eventSub, maxMessages: 10);
+      await joinChannel(
+        tester,
+        channelName: channel,
+        history: history,
+        eventSub: eventSub,
+        maxMessages: 10,
+      );
 
       await tester.pump();
       await tester.pump();
@@ -1064,32 +1300,46 @@ void main() {
       expect(find.textContaining('msg 14'), findsOneWidget);
     });
 
-    testWidgets('keeps thread messages even when over limit',
-        (WidgetTester tester) async {
+    testWidgets('keeps thread messages even when over limit', (
+      WidgetTester tester,
+    ) async {
       const channel = 'testchannel';
       final parent = TwitchMessage(
-        username: 'alice', text: 'thread root', messageId: 'p1',
+        username: 'alice',
+        text: 'thread root',
+        messageId: 'p1',
         timestamp: DateTime.now().subtract(const Duration(minutes: 10)),
         channel: channel,
       );
       final child = TwitchMessage(
-        username: 'bob', text: 'thread reply', messageId: 'c1',
-        replyToParentId: 'p1', replyToUser: 'alice', replyToText: 'thread root',
+        username: 'bob',
+        text: 'thread reply',
+        messageId: 'c1',
+        replyToParentId: 'p1',
+        replyToUser: 'alice',
+        replyToText: 'thread root',
         timestamp: DateTime.now().subtract(const Duration(minutes: 9)),
-        isHistory: true, channel: channel,
+        isHistory: true,
+        channel: channel,
       );
       final filler = List.generate(
         12,
         (i) => TwitchMessage(
-          username: 'user$i', text: 'filler $i', messageId: 'f$i',
+          username: 'user$i',
+          text: 'filler $i',
+          messageId: 'f$i',
           timestamp: DateTime.now().subtract(Duration(minutes: 8 - i)),
           channel: channel,
         ),
       );
       final eventSub = _TestEventSubService();
-      await joinChannel(tester, channelName: channel,
-          history: [parent, child, ...filler],
-          eventSub: eventSub, maxMessages: 10);
+      await joinChannel(
+        tester,
+        channelName: channel,
+        history: [parent, child, ...filler],
+        eventSub: eventSub,
+        maxMessages: 10,
+      );
 
       await tester.pump();
       await tester.pump();
@@ -1098,5 +1348,4 @@ void main() {
       expect(find.textContaining('thread reply'), findsAtLeast(1));
     });
   });
-
 }

@@ -33,9 +33,9 @@ void main() {
   }
 
   Finder underlineCustomPaint() => find.descendant(
-        of: find.byType(Positioned),
-        matching: find.byType(CustomPaint),
-      );
+    of: find.byType(Positioned),
+    matching: find.byType(CustomPaint),
+  );
 
   ChannelUnderlinePainter underlinePainter(WidgetTester tester) {
     final cp = tester.widget<CustomPaint>(underlineCustomPaint());
@@ -43,16 +43,18 @@ void main() {
   }
 
   group('Channel bar', () {
-    testWidgets('is absent when no channels are joined',
-        (WidgetTester tester) async {
+    testWidgets('is absent when no channels are joined', (
+      WidgetTester tester,
+    ) async {
       await tester.pumpWidget(const TwitchChatApp());
       await tester.pump();
 
       expect(underlineCustomPaint(), findsNothing);
     });
 
-    testWidgets('renders channel name after joining',
-        (WidgetTester tester) async {
+    testWidgets('renders channel name after joining', (
+      WidgetTester tester,
+    ) async {
       await tester.pumpWidget(const TwitchChatApp());
       await tester.pump();
 
@@ -61,8 +63,9 @@ void main() {
       expect(find.text('xqc'), findsOneWidget);
     });
 
-    testWidgets('first channel is selected by default',
-        (WidgetTester tester) async {
+    testWidgets('first channel is selected by default', (
+      WidgetTester tester,
+    ) async {
       await tester.pumpWidget(const TwitchChatApp());
       await tester.pump();
 
@@ -72,8 +75,7 @@ void main() {
       expect(text.style?.fontWeight, FontWeight.w600);
     });
 
-    testWidgets('tapping a channel selects it',
-        (WidgetTester tester) async {
+    testWidgets('tapping a channel selects it', (WidgetTester tester) async {
       await tester.pumpWidget(const TwitchChatApp());
       await tester.pump();
 
@@ -82,14 +84,19 @@ void main() {
 
       await tapChannel(tester, 'b');
 
-      expect(tester.widget<Text>(find.text('b')).style?.fontWeight,
-          FontWeight.w600);
-      expect(tester.widget<Text>(find.text('a')).style?.fontWeight,
-          FontWeight.normal);
+      expect(
+        tester.widget<Text>(find.text('b')).style?.fontWeight,
+        FontWeight.w600,
+      );
+      expect(
+        tester.widget<Text>(find.text('a')).style?.fontWeight,
+        FontWeight.normal,
+      );
     });
 
-    testWidgets('underline painter has valid selected index and width',
-        (WidgetTester tester) async {
+    testWidgets('underline painter has valid selected index and width', (
+      WidgetTester tester,
+    ) async {
       await tester.pumpWidget(const TwitchChatApp());
       await tester.pump();
 
@@ -100,8 +107,9 @@ void main() {
       expect(painter.itemWidths[painter.selectedIndex], greaterThan(0));
     });
 
-    testWidgets('underline moves when switching channels',
-        (WidgetTester tester) async {
+    testWidgets('underline moves when switching channels', (
+      WidgetTester tester,
+    ) async {
       await tester.pumpWidget(const TwitchChatApp());
       await tester.pump();
 
@@ -109,7 +117,8 @@ void main() {
       await joinChannel(tester, 'longername');
 
       final painterBefore = underlinePainter(tester);
-      final leftBefore = painterBefore.itemPositions[painterBefore.selectedIndex];
+      final leftBefore =
+          painterBefore.itemPositions[painterBefore.selectedIndex];
 
       await tapChannel(tester, 'short');
 
@@ -119,8 +128,7 @@ void main() {
       expect(leftBefore, greaterThan(leftAfter));
     });
 
-    testWidgets('underline painter has height 2',
-        (WidgetTester tester) async {
+    testWidgets('underline painter has height 2', (WidgetTester tester) async {
       await tester.pumpWidget(const TwitchChatApp());
       await tester.pump();
 
@@ -130,8 +138,9 @@ void main() {
       expect(painter.underlineHeight, 2.0);
     });
 
-    testWidgets('selected channel text uses primary color',
-        (WidgetTester tester) async {
+    testWidgets('selected channel text uses primary color', (
+      WidgetTester tester,
+    ) async {
       await tester.pumpWidget(const TwitchChatApp());
       await tester.pump();
 
@@ -141,8 +150,9 @@ void main() {
       expect(text.style?.color, isNotNull);
     });
 
-    testWidgets('channel bar disappears when last channel is removed',
-        (WidgetTester tester) async {
+    testWidgets('channel bar disappears when last channel is removed', (
+      WidgetTester tester,
+    ) async {
       await tester.pumpWidget(const TwitchChatApp());
       await tester.pump();
 
@@ -163,8 +173,9 @@ void main() {
       expect(underlineCustomPaint(), findsNothing);
     });
 
-    testWidgets('multiple channels render in the bar',
-        (WidgetTester tester) async {
+    testWidgets('multiple channels render in the bar', (
+      WidgetTester tester,
+    ) async {
       await tester.pumpWidget(const TwitchChatApp());
       await tester.pump();
 
@@ -177,18 +188,23 @@ void main() {
       expect(find.text('c3'), findsOneWidget);
     });
 
-    testWidgets('unselected channel has normal font weight',
-        (WidgetTester tester) async {
+    testWidgets('unselected channel has normal font weight', (
+      WidgetTester tester,
+    ) async {
       await tester.pumpWidget(const TwitchChatApp());
       await tester.pump();
 
       await joinChannel(tester, 'a');
       await joinChannel(tester, 'b');
 
-      expect(tester.widget<Text>(find.text('b')).style?.fontWeight,
-          FontWeight.w600);
-      expect(tester.widget<Text>(find.text('a')).style?.fontWeight,
-          FontWeight.normal);
+      expect(
+        tester.widget<Text>(find.text('b')).style?.fontWeight,
+        FontWeight.w600,
+      );
+      expect(
+        tester.widget<Text>(find.text('a')).style?.fontWeight,
+        FontWeight.normal,
+      );
     });
   });
 }

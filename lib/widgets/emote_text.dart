@@ -20,6 +20,7 @@ class EmoteText {
     required String text,
     required List<EmotePosition>? twitchPositions,
     required ChannelEmotes? channelEmotes,
+    void Function(GenericEmote)? onEmoteTap,
   }) {
     if (channelEmotes == null) {
       return parseTextWithLinks(text);
@@ -41,7 +42,7 @@ class EmoteText {
 
     void flushBase() {
       if (currentBase == null) return;
-      spans.add(_buildEmoteSpan(currentBase!));
+      spans.add(_buildEmoteSpan(currentBase!, onEmoteTap: onEmoteTap));
       if (pendingSpace != null) {
         spans.addAll(parseTextWithLinks(pendingSpace!));
         pendingSpace = null;
@@ -91,7 +92,10 @@ class EmoteText {
           }
         } else {
           flushBase();
-          pendingSpace = null;
+          if (pendingSpace != null) {
+            spans.addAll(parseTextWithLinks(pendingSpace!));
+            pendingSpace = null;
+          }
           currentBase = EmoteSpanData(base: seg.emote);
           currentBaseEnd = seg.endIndex;
         }
@@ -141,8 +145,19 @@ class EmoteText {
             EmoteSegment(emote: emote, startIndex: i, endIndex: i + length),
           );
         } else {
+          // Twitch emote from IRC tag not in API map — render via CDN
           segments.add(
-            TextSegment(text: text.substring(pos.startIndex, pos.endIndex)),
+            EmoteSegment(
+              emote: GenericEmote(
+                id: pos.emoteId,
+                code: emoteCode,
+                type: EmoteType.twitch,
+                url:
+                    'https://static-cdn.jtvnw.net/emoticons/v2/${pos.emoteId}/default/dark/3.0',
+              ),
+              startIndex: i,
+              endIndex: i + length,
+            ),
           );
         }
         i = pos.endIndex;
@@ -185,36 +200,34 @@ class EmoteText {
     return segments;
   }
 
-  static WidgetSpan _buildEmoteSpan(EmoteSpanData data) {
+  static WidgetSpan _buildEmoteSpan(
+    EmoteSpanData data, {
+    void Function(GenericEmote)? onEmoteTap,
+  }) {
     final size = min(28.0, 28.0 * data.base.relativeScale);
 
     final width = size * data.base.aspectRatio;
 
+    Widget emoteWidget;
     if (data.overlays.isEmpty) {
-      return WidgetSpan(
-        alignment: PlaceholderAlignment.middle,
-        child: SizedBox(
+      emoteWidget = SizedBox(
+        width: width,
+        height: size,
+        child: CachedNetworkImage(
+          imageUrl: data.base.url,
           width: width,
           height: size,
-          child: CachedNetworkImage(
-            imageUrl: data.base.url,
-            width: width,
-            height: size,
-            fit: BoxFit.contain,
-            fadeInDuration: Duration.zero,
-            placeholder: (_, _) => SizedBox(width: width, height: size),
-            errorWidget: (_, url, error) {
-              debugPrint('Emote image load failed: $url — $error');
-              return SizedBox(width: width, height: size);
-            },
-          ),
+          fit: BoxFit.contain,
+          fadeInDuration: Duration.zero,
+          placeholder: (_, _) => SizedBox(width: width, height: size),
+          errorWidget: (_, url, error) {
+            debugPrint('Emote image load failed: $url — $error');
+            return SizedBox(width: width, height: size);
+          },
         ),
       );
-    }
-
-    return WidgetSpan(
-      alignment: PlaceholderAlignment.middle,
-      child: SizedBox(
+    } else {
+      emoteWidget = SizedBox(
         width: width,
         height: size,
         child: Stack(
@@ -251,7 +264,19 @@ class EmoteText {
             ),
           ],
         ),
-      ),
+      );
+    }
+
+    if (onEmoteTap != null) {
+      emoteWidget = GestureDetector(
+        onTap: () => onEmoteTap(data.base),
+        child: emoteWidget,
+      );
+    }
+
+    return WidgetSpan(
+      alignment: PlaceholderAlignment.middle,
+      child: emoteWidget,
     );
   }
 }

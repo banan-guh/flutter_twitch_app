@@ -11,7 +11,7 @@ class TwitchOAuth {
   static String? lastError;
   static bool _flowInProgress = false;
 
-  /// Starts the OAuth implicit grant flow.
+  /// Starts the OAuth implicit grant flow via in-app WebView.
   ///
   /// Opens a full-screen WebView with the Twitch authorize page and intercepts
   /// the redirect to extract the access token from the URL fragment.
@@ -21,29 +21,18 @@ class TwitchOAuth {
       lastError = 'An authorization flow is already in progress.';
       return null;
     }
+
+    final urlInfo = generateAuthUrl();
+    if (urlInfo == null) return null;
+
     _flowInProgress = true;
-
-    final clientId = TwitchConfig.clientId;
-    if (!TwitchConfig.isConfigured) {
-      _flowInProgress = false;
-      return null;
-    }
-
-    final redirectUri = TwitchConfig.redirectUri;
-
-    final state = _randomState();
-    final authUrl =
-        '$_authorizeUrl'
-        '?client_id=$clientId'
-        '&redirect_uri=${Uri.encodeQueryComponent(redirectUri)}'
-        '&response_type=token'
-        '&scope=chat:read%20chat:edit%20user:read:chat%20user:write:chat%20user:manage:chat_color%20moderator:manage:banned_users%20moderator:manage:chat_messages%20moderator:manage:announcements%20moderator:manage:shoutouts'
-        '&state=$state'
-        '&force_verify=true';
-
     try {
-      return await _openWebView(context, authUrl, state, redirectUri)
-          .timeout(const Duration(minutes: 5));
+      return await _openWebView(
+        context,
+        urlInfo.url,
+        urlInfo.state,
+        TwitchConfig.redirectUri,
+      ).timeout(const Duration(minutes: 5));
     } on TimeoutException {
       lastError = 'Authorization timed out.';
       return null;
@@ -53,6 +42,24 @@ class TwitchOAuth {
     } finally {
       _flowInProgress = false;
     }
+  }
+
+  /// Generates the Twitch authorization URL with a fresh CSRF state.
+  ///
+  /// Returns the URL and the expected state, or null if [TwitchConfig.isConfigured] is false.
+  static ({String url, String state})? generateAuthUrl() {
+    if (!TwitchConfig.isConfigured) return null;
+
+    final state = _randomState();
+    final url =
+        '$_authorizeUrl'
+        '?client_id=${TwitchConfig.clientId}'
+        '&redirect_uri=${Uri.encodeQueryComponent(TwitchConfig.redirectUri)}'
+        '&response_type=token'
+        '&scope=chat:read%20chat:edit%20user:read:chat%20user:write:chat%20user:manage:chat_color%20moderator:manage:banned_users%20moderator:manage:chat_messages%20moderator:manage:announcements%20moderator:manage:shoutouts'
+        '&state=$state'
+        '&force_verify=true';
+    return (url: url, state: state);
   }
 
   static Future<String?> _openWebView(

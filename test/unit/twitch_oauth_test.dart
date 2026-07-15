@@ -4,7 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('TwitchOAuth.parseFragment', () {
     test('extracts access_token and state from fragment (implicit grant)', () {
-      final url = 'https://example.com/twitch-callback'
+      final url =
+          'https://example.com/twitch-callback'
           '#access_token=testtoken123'
           '&state=abc123';
       final params = TwitchOAuth.parseFragment(url);
@@ -13,7 +14,8 @@ void main() {
     });
 
     test('extracts token and state from fragment with extra params', () {
-      final url = 'https://example.com/twitch-callback'
+      final url =
+          'https://example.com/twitch-callback'
           '#access_token=token1'
           '&scope=chat%3Aread+chat%3Aedit'
           '&state=xyz'
@@ -25,7 +27,8 @@ void main() {
     });
 
     test('extracts error from fragment', () {
-      final url = 'https://example.com/twitch-callback'
+      final url =
+          'https://example.com/twitch-callback'
           '#error=access_denied&error_description=User+denied+access';
       final params = TwitchOAuth.parseFragment(url);
       expect(params['error'], 'access_denied');
@@ -54,7 +57,8 @@ void main() {
     });
 
     test('handles URL with query params and fragment', () {
-      final url = 'https://example.com/twitch-callback'
+      final url =
+          'https://example.com/twitch-callback'
           '?some=query'
           '#access_token=token123&state=abc';
       final params = TwitchOAuth.parseFragment(url);
@@ -64,7 +68,8 @@ void main() {
     });
 
     test('extracts token from complex redirect URL', () {
-      final url = 'https://example.com/twitch-callback'
+      final url =
+          'https://example.com/twitch-callback'
           '#access_token=abc123def456'
           '&scope=chat%3Aread+chat%3Aedit'
           '&state=csrf_token_here'

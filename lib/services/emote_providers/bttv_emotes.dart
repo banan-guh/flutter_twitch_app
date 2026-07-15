@@ -5,7 +5,7 @@ import '../../models/generic_emote.dart';
 
 class BttvEmoteProvider {
   static Future<List<GenericEmote>> fetchGlobal() async {
-    final uri = Uri.parse('https://api.bttv.com/3/cached/emotes/global');
+    final uri = Uri.parse('https://api.betterttv.net/3/cached/emotes/global');
     final res = await http.get(uri);
     if (res.statusCode != 200) return [];
     final data = jsonDecode(res.body) as List<dynamic>;
@@ -13,7 +13,9 @@ class BttvEmoteProvider {
   }
 
   static Future<List<GenericEmote>> fetchChannel(String channelId) async {
-    final uri = Uri.parse('https://api.bttv.com/3/cached/channels/$channelId');
+    final uri = Uri.parse(
+      'https://api.betterttv.net/3/cached/channels/$channelId',
+    );
     final res = await http.get(uri);
     if (res.statusCode != 200) return [];
     final data = jsonDecode(res.body) as Map<String, dynamic>;
@@ -36,13 +38,8 @@ class BttvEmoteProvider {
       final code = item['code'] as String?;
       if (id == null || code == null) continue;
 
-      String? url;
       final isAnimated = item['imageType'] == 'gif';
-      if (isAnimated) {
-        url = 'https://cdn.betterttv.net/emote/$id/3x.gif';
-      } else {
-        url = 'https://cdn.betterttv.net/emote/$id/3x.png';
-      }
+      final url = 'https://cdn.betterttv.net/emote/$id/3x';
 
       bool isZeroWidth = false;
       final zwField = item['zeroWidth'];

@@ -130,12 +130,12 @@ class ChatMessageTile extends StatelessWidget {
             padding: const EdgeInsets.only(left: 12, bottom: 4, right: 12),
             child: Row(
               children: [
-                Icon(Icons.error_outline,
-                    size: 14, color: Colors.red.shade300),
+                Icon(Icons.error_outline, size: 14, color: Colors.red.shade300),
                 const SizedBox(width: 4),
-                Text('Failed to send',
-                    style: TextStyle(
-                        fontSize: 11, color: Colors.red.shade300)),
+                Text(
+                  'Failed to send',
+                  style: TextStyle(fontSize: 11, color: Colors.red.shade300),
+                ),
                 const Spacer(),
                 TextButton.icon(
                   icon: const Icon(Icons.refresh, size: 14),

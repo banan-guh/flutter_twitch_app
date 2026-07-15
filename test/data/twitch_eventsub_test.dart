@@ -2,7 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_twitch_app/services/twitch_eventsub.dart';
 import 'package:flutter_twitch_app/models/twitch_message.dart';
 
-Map<String, dynamic> _welcome({String id = 'session-abc', int timeout = 10}) => {
+Map<String, dynamic> _welcome({String id = 'session-abc', int timeout = 10}) =>
+    {
       'metadata': {'message_type': 'session_welcome'},
       'payload': {
         'session': {'id': id, 'keepalive_timeout_seconds': timeout},
@@ -17,64 +18,65 @@ Map<String, dynamic> _notification({
   String text = 'hello',
   String? color,
   Map<String, dynamic>? reply,
-}) =>
-    <String, dynamic>{
-      'metadata': <String, dynamic>{
-        'message_type': 'notification',
-        'subscription_type': subType,
-      },
-      'payload': <String, dynamic>{
-        'subscription': <String, dynamic>{
-          'condition': <String, dynamic>{'broadcaster_user_id': 'broadcaster1'},
-        },
-        'event': <String, dynamic>{
-          'chatter_user_name': ?chatter,
-          'chatter_user_id': ?chatterId,
-          'message_id': ?messageId,
-          'message': <String, dynamic>{'text': text},
-          'color': ?color,
-          'reply': ?reply,
-        },
-      },
-    };
+}) => <String, dynamic>{
+  'metadata': <String, dynamic>{
+    'message_type': 'notification',
+    'subscription_type': subType,
+  },
+  'payload': <String, dynamic>{
+    'subscription': <String, dynamic>{
+      'condition': <String, dynamic>{'broadcaster_user_id': 'broadcaster1'},
+    },
+    'event': <String, dynamic>{
+      'chatter_user_name': ?chatter,
+      'chatter_user_id': ?chatterId,
+      'message_id': ?messageId,
+      'message': <String, dynamic>{'text': text},
+      'color': ?color,
+      'reply': ?reply,
+    },
+  },
+};
 
-Map<String, dynamic> _deleteEvent({String? messageId, String targetUser = 'deleted_user'}) => <String, dynamic>{
-      'metadata': <String, dynamic>{
-        'message_type': 'notification',
-        'subscription_type': 'channel.chat.message_delete',
-      },
-      'payload': <String, dynamic>{
-        'subscription': <String, dynamic>{
-          'condition': <String, dynamic>{'broadcaster_user_id': 'broadcaster1'},
-        },
-        'event': <String, dynamic>{
-          'message_id': ?messageId,
-          'target_user_name': targetUser,
-        },
-      },
-    };
+Map<String, dynamic> _deleteEvent({
+  String? messageId,
+  String targetUser = 'deleted_user',
+}) => <String, dynamic>{
+  'metadata': <String, dynamic>{
+    'message_type': 'notification',
+    'subscription_type': 'channel.chat.message_delete',
+  },
+  'payload': <String, dynamic>{
+    'subscription': <String, dynamic>{
+      'condition': <String, dynamic>{'broadcaster_user_id': 'broadcaster1'},
+    },
+    'event': <String, dynamic>{
+      'message_id': ?messageId,
+      'target_user_name': targetUser,
+    },
+  },
+};
 
 Map<String, dynamic> _banEvent({
   String user = 'banned_user',
   String? reason,
   String? endsAt,
-}) =>
-    <String, dynamic>{
-      'metadata': <String, dynamic>{
-        'message_type': 'notification',
-        'subscription_type': 'channel.ban',
-      },
-      'payload': <String, dynamic>{
-        'subscription': <String, dynamic>{
-          'condition': <String, dynamic>{'broadcaster_user_id': 'broadcaster1'},
-        },
-        'event': <String, dynamic>{
-          'user_name': user,
-          'reason': ?reason,
-          'ends_at': ?endsAt,
-        },
-      },
-    };
+}) => <String, dynamic>{
+  'metadata': <String, dynamic>{
+    'message_type': 'notification',
+    'subscription_type': 'channel.ban',
+  },
+  'payload': <String, dynamic>{
+    'subscription': <String, dynamic>{
+      'condition': <String, dynamic>{'broadcaster_user_id': 'broadcaster1'},
+    },
+    'event': <String, dynamic>{
+      'user_name': user,
+      'reason': ?reason,
+      'ends_at': ?endsAt,
+    },
+  },
+};
 
 void main() {
   late EventSubService service;
@@ -102,7 +104,9 @@ void main() {
     test('session_welcome with null timeout defaults to 10', () {
       service.handleRawMessage(<String, dynamic>{
         'metadata': <String, dynamic>{'message_type': 'session_welcome'},
-        'payload': <String, dynamic>{'session': <String, dynamic>{'id': 'sess-2'}},
+        'payload': <String, dynamic>{
+          'session': <String, dynamic>{'id': 'sess-2'},
+        },
       });
 
       expect(service.sessionId, 'sess-2');
@@ -126,13 +130,15 @@ void main() {
       final messages = <TwitchMessage>[];
       service.onMessage.listen(messages.add);
 
-      service.handleRawMessage(_notification(
-        subType: 'channel.chat.message',
-        chatter: 'testuser',
-        messageId: 'msg-1',
-        text: 'hello world',
-        color: '#FF0000',
-      ));
+      service.handleRawMessage(
+        _notification(
+          subType: 'channel.chat.message',
+          chatter: 'testuser',
+          messageId: 'msg-1',
+          text: 'hello world',
+          color: '#FF0000',
+        ),
+      );
 
       expect(messages, hasLength(1));
       expect(messages[0].username, 'testuser');
@@ -146,13 +152,15 @@ void main() {
       final messages = <TwitchMessage>[];
       service.onMessage.listen(messages.add);
 
-      service.handleRawMessage(_notification(
-        subType: 'channel.chat.message',
-        chatter: 'testuser',
-        chatterId: 'uid-42',
-        messageId: 'msg-uid',
-        text: 'with id',
-      ));
+      service.handleRawMessage(
+        _notification(
+          subType: 'channel.chat.message',
+          chatter: 'testuser',
+          chatterId: 'uid-42',
+          messageId: 'msg-uid',
+          text: 'with id',
+        ),
+      );
 
       expect(messages, hasLength(1));
       expect(messages[0].userId, 'uid-42');
@@ -162,12 +170,14 @@ void main() {
       final messages = <TwitchMessage>[];
       service.onMessage.listen(messages.add);
 
-      service.handleRawMessage(_notification(
-        subType: 'channel.chat.message',
-        chatter: null,
-        messageId: 'msg-2',
-        text: 'no name',
-      ));
+      service.handleRawMessage(
+        _notification(
+          subType: 'channel.chat.message',
+          chatter: null,
+          messageId: 'msg-2',
+          text: 'no name',
+        ),
+      );
 
       expect(messages[0].username, 'unknown');
     });
@@ -183,7 +193,9 @@ void main() {
         },
         'payload': <String, dynamic>{
           'subscription': <String, dynamic>{
-            'condition': <String, dynamic>{'broadcaster_user_id': 'broadcaster1'},
+            'condition': <String, dynamic>{
+              'broadcaster_user_id': 'broadcaster1',
+            },
           },
           'event': <String, dynamic>{
             'chatter_user_name': 'testuser',
@@ -199,12 +211,14 @@ void main() {
       final messages = <TwitchMessage>[];
       service.onMessage.listen(messages.add);
 
-      service.handleRawMessage(_notification(
-        subType: 'channel.chat.message',
-        chatter: 'testuser',
-        messageId: 'msg-4',
-        text: 'no color',
-      ));
+      service.handleRawMessage(
+        _notification(
+          subType: 'channel.chat.message',
+          chatter: 'testuser',
+          messageId: 'msg-4',
+          text: 'no color',
+        ),
+      );
 
       expect(messages[0].color, isNull);
     });
@@ -213,17 +227,19 @@ void main() {
       final messages = <TwitchMessage>[];
       service.onMessage.listen(messages.add);
 
-      service.handleRawMessage(_notification(
-        subType: 'channel.chat.message',
-        chatter: 'bob',
-        messageId: 'msg-5',
-        text: '@alice hey there',
-        reply: {
-          'parent_message_id': 'parent-1',
-          'parent_user_name': 'alice',
-          'parent_message_body': 'original msg',
-        },
-      ));
+      service.handleRawMessage(
+        _notification(
+          subType: 'channel.chat.message',
+          chatter: 'bob',
+          messageId: 'msg-5',
+          text: '@alice hey there',
+          reply: {
+            'parent_message_id': 'parent-1',
+            'parent_user_name': 'alice',
+            'parent_message_body': 'original msg',
+          },
+        ),
+      );
 
       expect(messages[0].replyToParentId, 'parent-1');
       expect(messages[0].replyToUser, 'alice');
@@ -231,24 +247,29 @@ void main() {
       expect(messages[0].text, 'hey there');
     });
 
-    test('does not strip @User prefix when it does not match reply user', () async {
-      final messages = <TwitchMessage>[];
-      service.onMessage.listen(messages.add);
+    test(
+      'does not strip @User prefix when it does not match reply user',
+      () async {
+        final messages = <TwitchMessage>[];
+        service.onMessage.listen(messages.add);
 
-      service.handleRawMessage(_notification(
-        subType: 'channel.chat.message',
-        chatter: 'bob',
-        messageId: 'msg-6',
-        text: '@charlie hey there',
-        reply: {
-          'parent_message_id': 'parent-2',
-          'parent_user_name': 'alice',
-          'parent_message_body': 'original msg',
-        },
-      ));
+        service.handleRawMessage(
+          _notification(
+            subType: 'channel.chat.message',
+            chatter: 'bob',
+            messageId: 'msg-6',
+            text: '@charlie hey there',
+            reply: {
+              'parent_message_id': 'parent-2',
+              'parent_user_name': 'alice',
+              'parent_message_body': 'original msg',
+            },
+          ),
+        );
 
-      expect(messages[0].text, '@charlie hey there');
-    });
+        expect(messages[0].text, '@charlie hey there');
+      },
+    );
 
     test('handles missing channel mapping (unknown broadcaster)', () async {
       final messages = <TwitchMessage>[];
@@ -261,7 +282,9 @@ void main() {
         },
         'payload': <String, dynamic>{
           'subscription': <String, dynamic>{
-            'condition': <String, dynamic>{'broadcaster_user_id': 'unknown_broadcaster'},
+            'condition': <String, dynamic>{
+              'broadcaster_user_id': 'unknown_broadcaster',
+            },
           },
           'event': <String, dynamic>{
             'chatter_user_name': 'testuser',
@@ -281,10 +304,9 @@ void main() {
           <({String messageId, String targetUser, String channel})>[];
       service.onMessageDeleted.listen(deletes.add);
 
-      service.handleRawMessage(_deleteEvent(
-        messageId: 'del-1',
-        targetUser: 'someuser',
-      ));
+      service.handleRawMessage(
+        _deleteEvent(messageId: 'del-1', targetUser: 'someuser'),
+      );
 
       expect(deletes, hasLength(1));
       expect(deletes[0].messageId, 'del-1');
@@ -314,11 +336,11 @@ void main() {
         },
         'payload': <String, dynamic>{
           'subscription': <String, dynamic>{
-            'condition': <String, dynamic>{'broadcaster_user_id': 'broadcaster1'},
+            'condition': <String, dynamic>{
+              'broadcaster_user_id': 'broadcaster1',
+            },
           },
-          'event': <String, dynamic>{
-            'message_id': 'del-2',
-          },
+          'event': <String, dynamic>{'message_id': 'del-2'},
         },
       });
 
@@ -329,13 +351,20 @@ void main() {
   group('notification (channel.ban)', () {
     test('emits permanent ban event', () async {
       final bans =
-          <({String user, String? reason, bool isTimeout, String? duration, String channel})>[];
+          <
+            ({
+              String user,
+              String? reason,
+              bool isTimeout,
+              String? duration,
+              String channel,
+            })
+          >[];
       service.onBan.listen(bans.add);
 
-      service.handleRawMessage(_banEvent(
-        user: 'baduser',
-        reason: 'Harassment',
-      ));
+      service.handleRawMessage(
+        _banEvent(user: 'baduser', reason: 'Harassment'),
+      );
 
       expect(bans, hasLength(1));
       expect(bans[0].user, 'baduser');
@@ -347,15 +376,23 @@ void main() {
 
     test('emits timeout event with duration in seconds', () async {
       final bans =
-          <({String user, String? reason, bool isTimeout, String? duration, String channel})>[];
+          <
+            ({
+              String user,
+              String? reason,
+              bool isTimeout,
+              String? duration,
+              String channel,
+            })
+          >[];
       service.onBan.listen(bans.add);
 
-      final future = DateTime.now().add(const Duration(seconds: 30)).toIso8601String();
-      service.handleRawMessage(_banEvent(
-        user: 'spammer',
-        reason: 'Time out',
-        endsAt: future,
-      ));
+      final future = DateTime.now()
+          .add(const Duration(seconds: 30))
+          .toIso8601String();
+      service.handleRawMessage(
+        _banEvent(user: 'spammer', reason: 'Time out', endsAt: future),
+      );
 
       expect(bans[0].isTimeout, isTrue);
       expect(bans[0].duration, endsWith('s'));
@@ -363,14 +400,21 @@ void main() {
 
     test('emits timeout event with duration in minutes', () async {
       final bans =
-          <({String user, String? reason, bool isTimeout, String? duration, String channel})>[];
+          <
+            ({
+              String user,
+              String? reason,
+              bool isTimeout,
+              String? duration,
+              String channel,
+            })
+          >[];
       service.onBan.listen(bans.add);
 
-      final future = DateTime.now().add(const Duration(minutes: 10)).toIso8601String();
-      service.handleRawMessage(_banEvent(
-        user: 'longtimeout',
-        endsAt: future,
-      ));
+      final future = DateTime.now()
+          .add(const Duration(minutes: 10))
+          .toIso8601String();
+      service.handleRawMessage(_banEvent(user: 'longtimeout', endsAt: future));
 
       expect(bans[0].isTimeout, isTrue);
       expect(bans[0].duration, endsWith('m'));
@@ -378,13 +422,20 @@ void main() {
 
     test('handles invalid endsAt date', () async {
       final bans =
-          <({String user, String? reason, bool isTimeout, String? duration, String channel})>[];
+          <
+            ({
+              String user,
+              String? reason,
+              bool isTimeout,
+              String? duration,
+              String channel,
+            })
+          >[];
       service.onBan.listen(bans.add);
 
-      service.handleRawMessage(_banEvent(
-        user: 'bad_date',
-        endsAt: 'not-a-date',
-      ));
+      service.handleRawMessage(
+        _banEvent(user: 'bad_date', endsAt: 'not-a-date'),
+      );
 
       expect(bans[0].isTimeout, isTrue);
       expect(bans[0].duration, isNull);
@@ -392,7 +443,15 @@ void main() {
 
     test('uses unknown as default user', () async {
       final bans =
-          <({String user, String? reason, bool isTimeout, String? duration, String channel})>[];
+          <
+            ({
+              String user,
+              String? reason,
+              bool isTimeout,
+              String? duration,
+              String channel,
+            })
+          >[];
       service.onBan.listen(bans.add);
 
       service.handleRawMessage(<String, dynamic>{
@@ -402,7 +461,9 @@ void main() {
         },
         'payload': <String, dynamic>{
           'subscription': <String, dynamic>{
-            'condition': <String, dynamic>{'broadcaster_user_id': 'broadcaster1'},
+            'condition': <String, dynamic>{
+              'broadcaster_user_id': 'broadcaster1',
+            },
           },
           'event': <String, dynamic>{},
         },

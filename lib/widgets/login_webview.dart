@@ -22,6 +22,7 @@ class LoginWebView extends StatefulWidget {
 
 class _LoginWebViewState extends State<LoginWebView> {
   bool _isLoading = true;
+  bool _handled = false;
   late final WebViewController _controller;
 
   @override
@@ -29,21 +30,33 @@ class _LoginWebViewState extends State<LoginWebView> {
     super.initState();
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setNavigationDelegate(NavigationDelegate(
-        onPageStarted: (_) {
-          if (mounted) setState(() => _isLoading = true);
-        },
-        onPageFinished: (_) {
-          if (mounted) setState(() => _isLoading = false);
-        },
-        onNavigationRequest: (request) {
-          if (_isRedirect(request.url)) {
-            _extractToken(request.url);
-            return NavigationDecision.prevent;
-          }
-          return NavigationDecision.navigate;
-        },
-      ))
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageStarted: (url) {
+            debugPrint('LoginWebView.onPageStarted: $url');
+            if (mounted) setState(() => _isLoading = true);
+          },
+          onPageFinished: (url) {
+            debugPrint('LoginWebView.onPageFinished: $url');
+            if (mounted) setState(() => _isLoading = false);
+          },
+          onNavigationRequest: (request) {
+            debugPrint('LoginWebView.onNavigationRequest: ${request.url}');
+            if (_isRedirect(request.url)) {
+              _extractToken(request.url);
+              return NavigationDecision.prevent;
+            }
+            return NavigationDecision.navigate;
+          },
+          onUrlChange: (change) {
+            final url = change.url;
+            debugPrint('LoginWebView.onUrlChange: $url');
+            if (url != null && _isRedirect(url)) {
+              _extractToken(url);
+            }
+          },
+        ),
+      )
       ..loadRequest(Uri.parse(widget.authUrl));
   }
 
@@ -52,6 +65,9 @@ class _LoginWebViewState extends State<LoginWebView> {
   }
 
   void _extractToken(String url) {
+    if (_handled) return;
+    _handled = true;
+
     final params = TwitchOAuth.parseFragment(url);
     final error = params['error'];
     final token = params['access_token'];
@@ -76,7 +92,7 @@ class _LoginWebViewState extends State<LoginWebView> {
       return;
     }
 
-    // URL matched redirectUri but had neither token nor error — ignore
+    // no token or error — redirectUri match was a false positive
   }
 
   @override
@@ -94,11 +110,8 @@ class _LoginWebViewState extends State<LoginWebView> {
       ),
       body: Column(
         children: [
-          if (_isLoading)
-            const LinearProgressIndicator(),
-          Expanded(
-            child: WebViewWidget(controller: _controller),
-          ),
+          if (_isLoading) const LinearProgressIndicator(),
+          Expanded(child: WebViewWidget(controller: _controller)),
         ],
       ),
     );

@@ -6,10 +6,7 @@ import 'package:flutter_twitch_app/services/emote_manager.dart';
 import 'package:flutter_twitch_app/widgets/emote_text.dart';
 
 ChannelEmotes _makeEmotes(Map<String, GenericEmote> byCode) {
-  return ChannelEmotes(
-    byCode: byCode,
-    suggestions: byCode.values.toList(),
-  );
+  return ChannelEmotes(byCode: byCode, suggestions: byCode.values.toList());
 }
 
 GenericEmote _e({
@@ -18,15 +15,14 @@ GenericEmote _e({
   EmoteType type = EmoteType.bttv,
   bool isZeroWidth = false,
   double relativeScale = 1.0,
-}) =>
-    GenericEmote(
-      id: id,
-      code: code,
-      type: type,
-      url: 'https://example.com/$id.png',
-      isZeroWidth: isZeroWidth,
-      relativeScale: relativeScale,
-    );
+}) => GenericEmote(
+  id: id,
+  code: code,
+  type: type,
+  url: 'https://example.com/$id.png',
+  isZeroWidth: isZeroWidth,
+  relativeScale: relativeScale,
+);
 
 void main() {
   group('EmoteText.build', () {
@@ -56,9 +52,7 @@ void main() {
     });
 
     test('single known emote by text match returns WidgetSpan', () {
-      final emotes = _makeEmotes({
-        'Kappa': _e(id: '1', code: 'Kappa'),
-      });
+      final emotes = _makeEmotes({'Kappa': _e(id: '1', code: 'Kappa')});
       final spans = EmoteText.build(
         text: 'Kappa',
         twitchPositions: null,
@@ -69,9 +63,7 @@ void main() {
     });
 
     test('text + emote + text mix returns correct span types', () {
-      final emotes = _makeEmotes({
-        'Kappa': _e(id: '1', code: 'Kappa'),
-      });
+      final emotes = _makeEmotes({'Kappa': _e(id: '1', code: 'Kappa')});
       final spans = EmoteText.build(
         text: 'hi Kappa there',
         twitchPositions: null,
@@ -90,7 +82,12 @@ void main() {
       final spans = EmoteText.build(
         text: 'KappaPride',
         twitchPositions: [
-          EmotePosition(emoteId: '2', startIndex: 0, endIndex: 10, emoteCode: 'KappaPride'),
+          EmotePosition(
+            emoteId: '2',
+            startIndex: 0,
+            endIndex: 10,
+            emoteCode: 'KappaPride',
+          ),
         ],
         channelEmotes: emotes,
       );
@@ -101,13 +98,27 @@ void main() {
 
     test('Twitch base emote + BTTV zero-width overlay', () {
       final emotes = _makeEmotes({
-        'Sunglasses': _e(id: 'tw-1', code: 'Sunglasses', type: EmoteType.twitch),
-        'EZ': _e(id: 'bttv-1', code: 'EZ', type: EmoteType.bttv, isZeroWidth: true),
+        'Sunglasses': _e(
+          id: 'tw-1',
+          code: 'Sunglasses',
+          type: EmoteType.twitch,
+        ),
+        'EZ': _e(
+          id: 'bttv-1',
+          code: 'EZ',
+          type: EmoteType.bttv,
+          isZeroWidth: true,
+        ),
       });
       final spans = EmoteText.build(
         text: 'Sunglasses EZ',
         twitchPositions: [
-          EmotePosition(emoteId: 'tw-1', startIndex: 0, endIndex: 11, emoteCode: 'Sunglasses'),
+          EmotePosition(
+            emoteId: 'tw-1',
+            startIndex: 0,
+            endIndex: 11,
+            emoteCode: 'Sunglasses',
+          ),
         ],
         channelEmotes: emotes,
       );
@@ -117,9 +128,7 @@ void main() {
     });
 
     test('URL detection in plain text segments', () {
-      final emotes = _makeEmotes({
-        'Kappa': _e(id: '1', code: 'Kappa'),
-      });
+      final emotes = _makeEmotes({'Kappa': _e(id: '1', code: 'Kappa')});
       final spans = EmoteText.build(
         text: 'Kappa check https://example.com',
         twitchPositions: null,
@@ -215,9 +224,7 @@ void main() {
     });
 
     test('unknown token renders as plain text', () {
-      final emotes = _makeEmotes({
-        'Kappa': _e(id: '1', code: 'Kappa'),
-      });
+      final emotes = _makeEmotes({'Kappa': _e(id: '1', code: 'Kappa')});
       final spans = EmoteText.build(
         text: 'unknownToken',
         twitchPositions: null,
@@ -226,6 +233,24 @@ void main() {
       expect(spans, hasLength(1));
       expect(spans[0], isA<TextSpan>());
       expect((spans[0] as TextSpan).text, 'unknownToken');
+    });
+
+    test('sub emote from IRC tag renders via CDN even if not in API map', () {
+      final emotes = _makeEmotes({});
+      final spans = EmoteText.build(
+        text: 'forsenPls',
+        twitchPositions: [
+          EmotePosition(
+            emoteId: '12345',
+            startIndex: 0,
+            endIndex: 9,
+            emoteCode: 'forsenPls',
+          ),
+        ],
+        channelEmotes: emotes,
+      );
+      expect(spans, hasLength(1));
+      expect(spans[0], isA<WidgetSpan>());
     });
 
     test('null channelEmotes renders as plain text', () {

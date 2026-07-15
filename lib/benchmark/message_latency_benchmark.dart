@@ -120,12 +120,14 @@ class LatencyBenchmark {
       }
       _pendingIrc[text] = meas;
 
-      _results.add(PerMessageResult(
-        index: i,
-        text: text,
-        messageId: messageId,
-        postRtt: tPost.difference(tSend),
-      ));
+      _results.add(
+        PerMessageResult(
+          index: i,
+          text: text,
+          messageId: messageId,
+          postRtt: tPost.difference(tSend),
+        ),
+      );
 
       if (i < numMessages - 1) {
         await Future.delayed(Duration(milliseconds: delayBetweenMs));

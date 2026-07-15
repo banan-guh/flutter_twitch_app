@@ -10,17 +10,16 @@ GenericEmote _e({
   EmoteScope scope = EmoteScope.global,
   String? ownerChannel,
   double relativeScale = 1.0,
-}) =>
-    GenericEmote(
-      id: id,
-      code: code,
-      type: type,
-      url: 'https://example.com/$id.png',
-      isZeroWidth: isZeroWidth,
-      scope: scope,
-      ownerChannel: ownerChannel,
-      relativeScale: relativeScale,
-    );
+}) => GenericEmote(
+  id: id,
+  code: code,
+  type: type,
+  url: 'https://example.com/$id.png',
+  isZeroWidth: isZeroWidth,
+  scope: scope,
+  ownerChannel: ownerChannel,
+  relativeScale: relativeScale,
+);
 
 void main() {
   group('GenericEmote', () {
@@ -40,7 +39,12 @@ void main() {
     });
 
     test('creates with channel scope', () {
-      final e = _e(id: '3', code: 'Kappa', scope: EmoteScope.channel, ownerChannel: 'forsen');
+      final e = _e(
+        id: '3',
+        code: 'Kappa',
+        scope: EmoteScope.channel,
+        ownerChannel: 'forsen',
+      );
       expect(e.scope, EmoteScope.channel);
       expect(e.ownerChannel, 'forsen');
     });
@@ -87,7 +91,12 @@ void main() {
 
     test('handles all EmoteType values', () {
       for (final type in EmoteType.values) {
-        final e = GenericEmote(id: '${type.index}', code: 'Test', type: type, url: '');
+        final e = GenericEmote(
+          id: '${type.index}',
+          code: 'Test',
+          type: type,
+          url: '',
+        );
         final json = e.toJson();
         final restored = GenericEmote.fromJson(json);
         expect(restored.type, type);
@@ -96,7 +105,13 @@ void main() {
 
     test('handles all EmoteScope values', () {
       for (final scope in EmoteScope.values) {
-        final e = GenericEmote(id: '1', code: 'Test', type: EmoteType.bttv, url: '', scope: scope);
+        final e = GenericEmote(
+          id: '1',
+          code: 'Test',
+          type: EmoteType.bttv,
+          url: '',
+          scope: scope,
+        );
         final json = e.toJson();
         final restored = GenericEmote.fromJson(json);
         expect(restored.scope, scope);
