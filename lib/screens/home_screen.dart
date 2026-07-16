@@ -658,7 +658,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               title: const Text('Copy full message'),
               onTap: () {
                 final ts =
-                    '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}';
+                    '${msg.timestamp.toLocal().hour.toString().padLeft(2, '0')}:${msg.timestamp.toLocal().minute.toString().padLeft(2, '0')}';
                 Clipboard.setData(
                   ClipboardData(text: '$ts ${msg.username}: ${msg.text}'),
                 );
@@ -1445,7 +1445,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       itemBuilder: (_, i) {
                         final msg = threadMsgs[threadMsgs.length - 1 - i];
                         final ts =
-                            '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}';
+                            '${msg.timestamp.toLocal().hour.toString().padLeft(2, '0')}:${msg.timestamp.toLocal().minute.toString().padLeft(2, '0')}';
 
                         if (msg.isSystem) {
                           return ChatMessageTile(
@@ -1591,7 +1591,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       itemBuilder: (_, i) {
                         final msg = msgs[msgs.length - 1 - i];
                         final ts =
-                            '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}';
+                            '${msg.timestamp.toLocal().hour.toString().padLeft(2, '0')}:${msg.timestamp.toLocal().minute.toString().padLeft(2, '0')}';
 
                         if (msg.isSystem) {
                           return ChatMessageTile(
@@ -2247,7 +2247,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
           Widget body;
           final ts =
-              '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}';
+              '${msg.timestamp.toLocal().hour.toString().padLeft(2, '0')}:${msg.timestamp.toLocal().minute.toString().padLeft(2, '0')}';
 
           if (msg.isSystem) {
             body = ChatMessageTile(

@@ -11,7 +11,7 @@ class ChatMessageTile extends StatelessWidget {
   final bool isHighlighted;
   final Widget? replyIndicator;
   final VoidCallback? onLongPress;
-  final Color bodyColor;
+  final Color? bodyColor;
   final String? semanticsLabel;
 
   const ChatMessageTile({
@@ -26,7 +26,7 @@ class ChatMessageTile extends StatelessWidget {
     this.isHighlighted = false,
     this.replyIndicator,
     this.onLongPress,
-    this.bodyColor = Colors.red,
+    this.bodyColor,
     this.semanticsLabel,
   });
 
@@ -39,7 +39,7 @@ class ChatMessageTile extends StatelessWidget {
     );
     final bodyStyle = TextStyle(
       fontSize: bodyFontSize,
-      color: bodyColor,
+      color: bodyColor ?? Theme.of(context).colorScheme.onSurface,
       decoration: useTextDecorationNone ? TextDecoration.none : null,
     );
 

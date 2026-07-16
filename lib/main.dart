@@ -70,7 +70,13 @@ class _TwitchChatAppState extends State<TwitchChatApp> {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      darkTheme: ThemeData.dark(useMaterial3: true),
+      darkTheme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.deepPurple,
+          brightness: Brightness.dark,
+        ),
+        useMaterial3: true,
+      ),
       home: HomeScreen(
         twitchAuth: _twitchAuth,
         onThemeChanged: _setThemeMode,
