@@ -356,6 +356,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _saveOAuthMode(value);
             },
           ),
+          const Divider(height: 32),
+          Text('About', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('flutter_twitch_app'),
+            subtitle: const Text('Version 0.0.1'),
+          ),
         ],
       ),
     );

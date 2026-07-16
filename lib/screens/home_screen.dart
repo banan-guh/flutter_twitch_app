@@ -94,6 +94,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   StreamSubscription<IrcMessage>? _ircOwnMsgSub;
 
   final _ownMessageIds = <String>{};
+  int _localCounter = 0;
+  final _pendingLocals = <String, _PendingLocal>{};
 
   String? _currentUserLogin;
   String? _currentUserId;
@@ -337,6 +339,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (msg.messageId != null &&
         _currentUserLogin != null &&
         msg.username.toLowerCase() == _currentUserLogin!.toLowerCase()) {
+      String? pendingKey;
+      for (final entry in _pendingLocals.entries) {
+        if (entry.value.channel == channel && entry.value.text == msg.text) {
+          pendingKey = entry.key;
+          break;
+        }
+      }
+      if (pendingKey != null) {
+        _pendingLocals.remove(pendingKey);
+        _channelMessages[channel]?.removeWhere(
+          (m) => m.messageId == pendingKey,
+        );
+      }
       _ownMessageIds.add(msg.messageId!);
     }
 
@@ -415,6 +430,22 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _ownMessageIds.add(messageId);
     }
 
+    final text = ircMsg.trailing!;
+
+    String? pendingKey;
+    for (final entry in _pendingLocals.entries) {
+      if (entry.value.channel == channel && entry.value.text == text) {
+        pendingKey = entry.key;
+        break;
+      }
+    }
+    if (pendingKey != null) {
+      _pendingLocals.remove(pendingKey);
+      _channelMessages[channel]?.removeWhere(
+        (m) => m.messageId == pendingKey,
+      );
+    }
+
     final tsMs = ircMsg.tags['tmi-sent-ts'];
     final timestamp = tsMs != null
         ? DateTime.fromMillisecondsSinceEpoch(
@@ -433,7 +464,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     final msg = TwitchMessage(
       username: displayName,
-      text: ircMsg.trailing!,
+      text: text,
       channel: channel,
       messageId: messageId,
       timestamp: timestamp,
@@ -462,11 +493,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   ) {
     final login = _currentUserLogin;
     if (login == null) return;
+
+    final useTempId = messageId == null;
+    final effectiveId = useTempId ? 'local_${_localCounter++}' : messageId;
+
     final msg = TwitchMessage(
       username: login,
       text: text,
       channel: channel,
-      messageId: messageId,
+      messageId: effectiveId,
       color: pickColor(login),
       userId: _currentUserId,
       replyToParentId: replyTo?.messageId,
@@ -475,8 +510,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
     _channelMessages.putIfAbsent(channel, () => []);
     _channelMessages[channel]!.insert(0, msg);
+    if (useTempId) {
+      _pendingLocals[effectiveId] = _PendingLocal(channel, text);
+    }
     _truncateChannelMessages(channel);
-    if (messageId != null) {
+    if (!useTempId) {
       _messageKeys.putIfAbsent('$channel:$messageId', () => GlobalKey());
     }
     _chatVersion.value++;
@@ -2056,7 +2094,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               text: span.text,
               style: TextStyle(
                 fontSize: 14 * textScale,
-                color: parseColor(msg.color, background: surface),
+                color: parseColor(msg.color),
                 decoration: TextDecoration.none,
               ),
               recognizer: span.recognizer,
@@ -2213,7 +2251,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   style: TextStyle(
                     fontSize: 14 * s,
                     fontWeight: FontWeight.w600,
-                    color: parseColor(msg.color, background: surface),
+                    color: parseColor(msg.color),
                     decoration: TextDecoration.none,
                   ),
                   recognizer: TapGestureRecognizer()
@@ -3003,10 +3041,24 @@ class _MessageInput extends StatelessWidget {
                 ),
               ),
             ),
-            onSubmitted: (_) => onSend(),
+            onChanged: (value) {
+              if (value.contains('\n')) {
+                controller.text = value.replaceAll('\n', '');
+                controller.selection = TextSelection.fromPosition(
+                  TextPosition(offset: controller.text.length),
+                );
+                onSend();
+              }
+            },
           ),
         ],
       ),
     );
   }
+}
+
+class _PendingLocal {
+  final String channel;
+  final String text;
+  _PendingLocal(this.channel, this.text);
 }
