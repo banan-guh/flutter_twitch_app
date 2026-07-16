@@ -32,12 +32,12 @@ class IrcService {
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _streamSub;
   Timer? _pingTimer;
-  final _channels = <String>{};
   String? _username;
   String? _token;
   bool _reconnecting = false;
   bool _disposed = false;
   int _reconnectAttempt = 0;
+  int _pingsWithoutPong = 0;
 
   final _banController = StreamController<IrcBanEvent>.broadcast();
   final _noticeController = StreamController<IrcNoticeEvent>.broadcast();
@@ -60,6 +60,7 @@ class IrcService {
 
   Future<void> _connect() async {
     _disconnect();
+    _pingsWithoutPong = 0;
 
     try {
       _channel = WebSocketChannel.connect(Uri.parse(_wsUrl));
@@ -72,7 +73,7 @@ class IrcService {
           _scheduleReconnect();
         },
         onDone: () {
-          debugPrint('IRC stream closed');
+          debugPrint('IRC stream closed (code: ${_channel?.closeCode}, reason: ${_channel?.closeReason})');
           _scheduleReconnect();
         },
       );
@@ -82,14 +83,18 @@ class IrcService {
       _send('CAP REQ :twitch.tv/tags');
 
       _pingTimer?.cancel();
-      _pingTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      _pingTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+        if (_channel == null) return;
+        _pingsWithoutPong++;
+        if (_pingsWithoutPong >= 3) {
+          debugPrint('IRC PONG timeout – reconnecting');
+          _disconnect();
+          _scheduleReconnect();
+          return;
+        }
         _send('PING :keepalive');
       });
 
-      for (final channel in _channels) {
-        _send('JOIN #$channel');
-      }
-      _reconnectAttempt = 0;
     } catch (e) {
       debugPrint('IRC connect error: $e');
       _scheduleReconnect();
@@ -103,19 +108,25 @@ class IrcService {
     _streamSub = null;
     _channel?.sink.close();
     _channel = null;
+    _pingsWithoutPong = 0;
   }
 
   void _scheduleReconnect() {
     if (_reconnecting || _disposed) return;
     _reconnecting = true;
     _reconnectAttempt++;
-    final base = Duration(
-      seconds: min(pow(2, _reconnectAttempt - 1).toInt(), 30),
-    );
-    final jitter = 0.75 + Random().nextDouble() * 0.5;
-    final delay = Duration(
-      milliseconds: (base.inMilliseconds * jitter).toInt(),
-    );
+    Duration delay;
+    if (_reconnectAttempt == 1) {
+      delay = Duration.zero;
+    } else {
+      final base = Duration(
+        seconds: min(pow(2, _reconnectAttempt - 2).toInt(), 30),
+      );
+      final jitter = 0.75 + Random().nextDouble() * 0.5;
+      delay = Duration(
+        milliseconds: (base.inMilliseconds * jitter).toInt(),
+      );
+    }
     Future.delayed(delay, () {
       _reconnecting = false;
       if (!_disposed && _username != null && _token != null) {
@@ -129,11 +140,17 @@ class IrcService {
   }
 
   void _handleLine(String raw) {
+    _pingsWithoutPong = 0;
     for (final line in raw.split('\r\n')) {
       if (line.isEmpty) continue;
 
       if (line.startsWith('PING')) {
         _send(line.replaceFirst('PING', 'PONG'));
+        continue;
+      }
+
+      if (line.startsWith('PONG')) {
+        _reconnectAttempt = 0;
         continue;
       }
 
@@ -203,20 +220,6 @@ class IrcService {
     _jtvController.add(
       IrcNoticeEvent(channel: channel, message: msg.trailing!),
     );
-  }
-
-  void join(String channel) {
-    _channels.add(channel);
-    if (_channel != null) {
-      _send('JOIN #$channel');
-    }
-  }
-
-  void part(String channel) {
-    _channels.remove(channel);
-    if (_channel != null) {
-      _send('PART #$channel');
-    }
   }
 
   void sendMessage(

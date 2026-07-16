@@ -21,6 +21,7 @@ class EmoteText {
     required List<EmotePosition>? twitchPositions,
     required ChannelEmotes? channelEmotes,
     void Function(GenericEmote)? onEmoteTap,
+    double scale = 1.0,
   }) {
     if (channelEmotes == null) {
       return parseTextWithLinks(text);
@@ -42,7 +43,7 @@ class EmoteText {
 
     void flushBase() {
       if (currentBase == null) return;
-      spans.add(_buildEmoteSpan(currentBase!, onEmoteTap: onEmoteTap));
+      spans.add(_buildEmoteSpan(currentBase!, onEmoteTap: onEmoteTap, scale: scale));
       if (pendingSpace != null) {
         spans.addAll(parseTextWithLinks(pendingSpace!));
         pendingSpace = null;
@@ -203,8 +204,9 @@ class EmoteText {
   static WidgetSpan _buildEmoteSpan(
     EmoteSpanData data, {
     void Function(GenericEmote)? onEmoteTap,
+    double scale = 1.0,
   }) {
-    final size = min(28.0, 28.0 * data.base.relativeScale);
+    final size = min(28.0, 28.0 * data.base.relativeScale) * scale;
 
     final width = size * data.base.aspectRatio;
 

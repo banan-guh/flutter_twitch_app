@@ -132,9 +132,6 @@ class _FakeIrcService extends IrcService {
   }) async {}
 
   @override
-  void join(String channel) {}
-
-  @override
   Stream<IrcBanEvent> get onBan => _banCtrl.stream;
 
   @override
@@ -328,8 +325,7 @@ void main() {
     await tester.pumpWidget(const TwitchChatApp());
     await tester.pump();
 
-    expect(find.byIcon(Icons.notifications_outlined), findsOneWidget);
-    expect(find.byType(Badge), findsNothing);
+    expect(find.byIcon(Icons.notifications_active), findsOneWidget);
   });
 
   testWidgets('Notification bell opens mentions modal', (
@@ -346,13 +342,13 @@ void main() {
 
     expect(find.text('Mentions / Whispers'), findsNothing);
 
-    await tester.tap(find.byIcon(Icons.notifications_outlined));
+    await tester.tap(find.byIcon(Icons.notifications_active));
     await tester.pumpAndSettle();
 
     expect(find.text('Mentions / Whispers'), findsOneWidget);
     expect(find.text('No mentions or whispers'), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.notifications_outlined));
+    await tester.tap(find.byIcon(Icons.notifications_active));
     await tester.pumpAndSettle();
 
     expect(find.text('Mentions / Whispers'), findsNothing);

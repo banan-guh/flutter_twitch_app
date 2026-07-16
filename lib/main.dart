@@ -3,6 +3,7 @@ import 'screens/home_screen.dart';
 import 'services/twitch_auth.dart';
 import 'services/twitch_eventsub.dart';
 import 'services/twitch_irc.dart';
+import 'services/twitch_irc_read.dart';
 import 'services/recent_messages.dart';
 
 void main() {
@@ -13,12 +14,14 @@ void main() {
 class TwitchChatApp extends StatefulWidget {
   final EventSubService? eventSubService;
   final IrcService? ircService;
+  final IrcReadService? ircReadService;
   final RecentMessagesService? recentMessagesService;
 
   const TwitchChatApp({
     super.key,
     this.eventSubService,
     this.ircService,
+    this.ircReadService,
     this.recentMessagesService,
   });
 
@@ -73,6 +76,7 @@ class _TwitchChatAppState extends State<TwitchChatApp> {
         onThemeChanged: _setThemeMode,
         eventSubService: widget.eventSubService,
         ircService: widget.ircService,
+        ircReadService: widget.ircReadService,
         recentMessagesService: widget.recentMessagesService,
       ),
     );

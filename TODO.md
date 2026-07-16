@@ -42,3 +42,4 @@
 - [ ] **Different mode** — Toggleable type box visibility and fullscreen.
 - [ ] **Robotty history bot backup** — Add fallback/backup for recent-messages.robotty.de service.
 - [ ] **Injectable TwitchBadgeService** — Currently standalone; consider making it injectable (like EventSubService/IrcService) for testability. Low priority.
+- [ ] **Analytics** self-explanatory. just a possible future feature
