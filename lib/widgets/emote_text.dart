@@ -212,59 +212,65 @@ class EmoteText {
 
     Widget emoteWidget;
     if (data.overlays.isEmpty) {
-      emoteWidget = SizedBox(
-        width: width,
-        height: size,
-        child: CachedNetworkImage(
-          imageUrl: data.base.url,
+      emoteWidget = Semantics(
+        label: data.base.code,
+        child: SizedBox(
           width: width,
           height: size,
-          fit: BoxFit.contain,
-          fadeInDuration: Duration.zero,
-          placeholder: (_, _) => SizedBox(width: width, height: size),
-          errorWidget: (_, url, error) {
-            debugPrint('Emote image load failed: $url — $error');
-            return SizedBox(width: width, height: size);
-          },
+          child: CachedNetworkImage(
+            imageUrl: data.base.url,
+            width: width,
+            height: size,
+            fit: BoxFit.contain,
+            fadeInDuration: Duration.zero,
+            placeholder: (_, _) => SizedBox(width: width, height: size),
+            errorWidget: (_, url, error) {
+              debugPrint('Emote image load failed: $url — $error');
+              return SizedBox(width: width, height: size);
+            },
+          ),
         ),
       );
     } else {
-      emoteWidget = SizedBox(
-        width: width,
-        height: size,
-        child: Stack(
-          children: [
-            CachedNetworkImage(
-              imageUrl: data.base.url,
-              width: width,
-              height: size,
-              fit: BoxFit.contain,
-              fadeInDuration: Duration.zero,
-              placeholder: (_, _) => const SizedBox(),
-              errorWidget: (_, url, error) {
-                debugPrint('Emote base image load failed: $url — $error');
-                return const SizedBox();
-              },
-            ),
-            ...data.overlays.map(
-              (overlay) => Positioned.fill(
-                child: CachedNetworkImage(
-                  imageUrl: overlay.url,
-                  width: width,
-                  height: size,
-                  fit: BoxFit.contain,
-                  fadeInDuration: Duration.zero,
-                  placeholder: (_, _) => const SizedBox(),
-                  errorWidget: (_, url, error) {
-                    debugPrint(
-                      'Emote overlay image load failed: $url — $error',
-                    );
-                    return const SizedBox();
-                  },
+      emoteWidget = Semantics(
+        label: data.base.code,
+        child: SizedBox(
+          width: width,
+          height: size,
+          child: Stack(
+            children: [
+              CachedNetworkImage(
+                imageUrl: data.base.url,
+                width: width,
+                height: size,
+                fit: BoxFit.contain,
+                fadeInDuration: Duration.zero,
+                placeholder: (_, _) => const SizedBox(),
+                errorWidget: (_, url, error) {
+                  debugPrint('Emote base image load failed: $url — $error');
+                  return const SizedBox();
+                },
+              ),
+              ...data.overlays.map(
+                (overlay) => Positioned.fill(
+                  child: CachedNetworkImage(
+                    imageUrl: overlay.url,
+                    width: width,
+                    height: size,
+                    fit: BoxFit.contain,
+                    fadeInDuration: Duration.zero,
+                    placeholder: (_, _) => const SizedBox(),
+                    errorWidget: (_, url, error) {
+                      debugPrint(
+                        'Emote overlay image load failed: $url — $error',
+                      );
+                      return const SizedBox();
+                    },
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       );
     }

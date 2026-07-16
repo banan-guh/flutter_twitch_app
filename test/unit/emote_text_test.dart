@@ -276,8 +276,8 @@ void main() {
       expect(spans, hasLength(1));
       expect(spans[0], isA<WidgetSpan>());
       final widget = (spans[0] as WidgetSpan).child;
-      expect(widget, isA<SizedBox>());
-      final box = widget as SizedBox;
+      expect(widget, isA<Semantics>());
+      final box = (widget as Semantics).child as SizedBox;
       expect(box.width, 28.0 * 0.625);
       expect(box.height, 28.0 * 0.625);
     });
@@ -295,8 +295,8 @@ void main() {
       expect(spans, hasLength(1));
       expect(spans[0], isA<WidgetSpan>());
       final widget = (spans[0] as WidgetSpan).child;
-      expect(widget, isA<SizedBox>());
-      final box = widget as SizedBox;
+      expect(widget, isA<Semantics>());
+      final box = (widget as Semantics).child as SizedBox;
       expect(box.width, 28.0 * 0.5);
       expect(box.height, 28.0 * 0.5);
     });

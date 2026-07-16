@@ -12,6 +12,7 @@ class ChatMessageTile extends StatelessWidget {
   final Widget? replyIndicator;
   final VoidCallback? onLongPress;
   final Color bodyColor;
+  final String? semanticsLabel;
 
   const ChatMessageTile({
     super.key,
@@ -26,6 +27,7 @@ class ChatMessageTile extends StatelessWidget {
     this.replyIndicator,
     this.onLongPress,
     this.bodyColor = Colors.red,
+    this.semanticsLabel,
   });
 
   @override
@@ -87,8 +89,15 @@ class ChatMessageTile extends StatelessWidget {
               top: 0,
               bottom: 0,
               child: Container(
-                width: 3,
+                width: 4,
                 color: Colors.red.withValues(alpha: 0.4),
+                alignment: Alignment.topCenter,
+                padding: const EdgeInsets.only(top: 4),
+                child: Icon(
+                  Icons.alternate_email,
+                  size: 10,
+                  color: Colors.red.withValues(alpha: 0.6),
+                ),
               ),
             ),
           ],
@@ -106,6 +115,14 @@ class ChatMessageTile extends StatelessWidget {
 
     if (onLongPress != null) {
       child = InkWell(onLongPress: onLongPress, child: child);
+    }
+
+    if (semanticsLabel != null) {
+      child = Semantics(
+        label: semanticsLabel!,
+        excludeSemantics: true,
+        child: child,
+      );
     }
 
     return child;

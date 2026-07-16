@@ -1388,7 +1388,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final theme = Theme.of(context);
     final surface = theme.colorScheme.surface;
     final threadMsgs = _computeThreadMessages();
-    final s = _uiScale;
+    final systemScale = MediaQuery.textScalerOf(context).scale(1.0);
+    final s = _uiScale * systemScale;
 
     return Material(
       color: theme.scaffoldBackgroundColor,
@@ -1407,6 +1408,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   children: [
                     IconButton(
                       icon: const Icon(Icons.close),
+                      tooltip: 'Close reply thread',
                       onPressed: _closePanel,
                     ),
                     const SizedBox(width: 4),
@@ -1453,6 +1455,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             timestampFontSize: 13 * s,
                             bodyFontSize: 13 * s,
                             bodyColor: msg.bodyColor,
+                            semanticsLabel: msg.text,
                           );
                         }
 
@@ -1514,6 +1517,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             ],
                           ],
                           onLongPress: () => _showThreadMessageMenu(msg),
+                          semanticsLabel: msg.isHighlighted
+                              ? 'Mention: $ts ${msg.username}: ${msg.text}'
+                              : '$ts ${msg.username}: ${msg.text}',
                         );
                       },
                     ),
@@ -1528,7 +1534,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final msgs = _channelMessages[_mentionsChannel] ?? [];
     final theme = Theme.of(context);
     final surface = theme.colorScheme.surface;
-    final s = _uiScale;
+    final systemScale = MediaQuery.textScalerOf(context).scale(1.0);
+    final s = _uiScale * systemScale;
 
     return Material(
       color: theme.scaffoldBackgroundColor,
@@ -1547,6 +1554,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   children: [
                     IconButton(
                       icon: const Icon(Icons.arrow_back),
+                      tooltip: 'Back',
                       onPressed: _closePanel,
                     ),
                     const SizedBox(width: 4),
@@ -1593,6 +1601,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             timestampFontSize: 13 * s,
                             bodyFontSize: 13 * s,
                             bodyColor: msg.bodyColor,
+                            semanticsLabel: msg.text,
                           );
                         }
 
@@ -1653,6 +1662,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                               ),
                             ],
                           ],
+                          semanticsLabel: msg.isHighlighted
+                              ? 'Mention: $ts ${msg.username}: ${msg.text}'
+                              : '$ts ${msg.username}: ${msg.text}',
                         );
                       },
                     ),
@@ -2135,25 +2147,28 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         spans.add(
           WidgetSpan(
             alignment: PlaceholderAlignment.middle,
-            child: Padding(
-              padding: const EdgeInsets.only(right: 2),
-              child: ClipOval(
-                child: CachedNetworkImage(
-                  imageUrl: avatarUrl,
-                  width: badgeSize,
-                  height: badgeSize,
-                  fit: BoxFit.cover,
-                  fadeInDuration: Duration.zero,
-                  placeholder: (_, _) => SizedBox(
+            child: Semantics(
+              label: msg.sourceBroadcasterName ?? 'shared chat',
+              child: Padding(
+                padding: const EdgeInsets.only(right: 2),
+                child: ClipOval(
+                  child: CachedNetworkImage(
+                    imageUrl: avatarUrl,
                     width: badgeSize,
                     height: badgeSize,
+                    fit: BoxFit.cover,
+                    fadeInDuration: Duration.zero,
+                    placeholder: (_, _) => SizedBox(
+                      width: badgeSize,
+                      height: badgeSize,
+                    ),
+                    errorWidget: (_, url, error) {
+                      debugPrint(
+                        'Shared chat badge image failed: $url — $error',
+                      );
+                      return SizedBox(width: badgeSize, height: badgeSize);
+                    },
                   ),
-                  errorWidget: (_, url, error) {
-                    debugPrint(
-                      'Shared chat badge image failed: $url — $error',
-                    );
-                    return SizedBox(width: badgeSize, height: badgeSize);
-                  },
                 ),
               ),
             ),
@@ -2175,22 +2190,25 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         spans.add(
           WidgetSpan(
             alignment: PlaceholderAlignment.middle,
-            child: Padding(
-              padding: const EdgeInsets.only(right: 2),
-              child: CachedNetworkImage(
-                imageUrl: url,
-                width: badgeSize,
-                height: badgeSize,
-                fit: BoxFit.contain,
-                fadeInDuration: Duration.zero,
-                placeholder: (_, _) => SizedBox(
+            child: Semantics(
+              label: badge.setId,
+              child: Padding(
+                padding: const EdgeInsets.only(right: 2),
+                child: CachedNetworkImage(
+                  imageUrl: url,
                   width: badgeSize,
                   height: badgeSize,
+                  fit: BoxFit.contain,
+                  fadeInDuration: Duration.zero,
+                  placeholder: (_, _) => SizedBox(
+                    width: badgeSize,
+                    height: badgeSize,
+                  ),
+                  errorWidget: (_, url, error) {
+                    debugPrint('Badge image load failed: $url — $error');
+                    return SizedBox(width: badgeSize, height: badgeSize);
+                  },
                 ),
-                errorWidget: (_, url, error) {
-                  debugPrint('Badge image load failed: $url — $error');
-                  return SizedBox(width: badgeSize, height: badgeSize);
-                },
               ),
             ),
           ),
@@ -2203,7 +2221,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget _buildChat(String channel) {
     final msgs = _messages(channel);
     final surface = Theme.of(context).colorScheme.surface;
-    final s = _uiScale;
+    final systemScale = MediaQuery.textScalerOf(context).scale(1.0);
+    final s = _uiScale * systemScale;
 
     if (msgs.isEmpty) {
       return const Center(child: Text('No messages yet'));
@@ -2239,6 +2258,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               useTextDecorationNone: true,
               bodyFontSize: 14 * s,
               timestampFontSize: 14 * s,
+              semanticsLabel: msg.text,
             );
           } else {
             body = ChatMessageTile(
@@ -2272,6 +2292,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   ? _buildReplyIndicator(msg)
                   : null,
               onLongPress: () => _showMessageMenu(msg),
+              semanticsLabel: msg.isHighlighted
+                  ? 'Mention: $ts ${msg.username}: ${msg.text}'
+                  : '$ts ${msg.username}: ${msg.text}',
             );
           }
 
@@ -2994,10 +3017,9 @@ class _MessageInput extends StatelessWidget {
                   ),
                   IconButton(
                     icon: Icon(Icons.close, size: 16),
+                    tooltip: 'Cancel reply',
                     onPressed: onCancelReply,
                     visualDensity: VisualDensity.compact,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
                   ),
                 ],
               ),
