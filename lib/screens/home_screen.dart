@@ -332,7 +332,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final channel = msg.channel;
     if (channel == null) return;
 
-    if (msg.messageId != null && _ownMessageIds.remove(msg.messageId)) {
+    if (msg.messageId != null &&
+        _messageKeys.containsKey('$channel:${msg.messageId}')) {
       return;
     }
 
@@ -423,14 +424,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (channel == null || ircMsg.trailing == null) return;
 
     final messageId = ircMsg.tags['id'];
-    if (messageId != null) {
-      if (_ownMessageIds.contains(messageId)) {
-        return;
-      }
-      _ownMessageIds.add(messageId);
-    }
-
     final text = ircMsg.trailing!;
+
+    if (messageId != null &&
+        _messageKeys.containsKey('$channel:$messageId')) {
+      return;
+    }
 
     String? pendingKey;
     for (final entry in _pendingLocals.entries) {
@@ -496,6 +495,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     final useTempId = messageId == null;
     final effectiveId = useTempId ? 'local_${_localCounter++}' : messageId;
+
+    if (!useTempId && _messageKeys.containsKey('$channel:$effectiveId')) {
+      return;
+    }
 
     final msg = TwitchMessage(
       username: login,
@@ -1014,7 +1017,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       }
     }
 
-    // IRC fallback.
+    // IRC fallback — insert optimistically with temp ID.
+    _insertLocalMessage(text, channel, null, reply);
     _irc.sendMessage(channel, text, replyParentMessageId: reply?.messageId);
   }
 
