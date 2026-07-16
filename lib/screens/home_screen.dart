@@ -2098,7 +2098,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               text: span.text,
               style: TextStyle(
                 fontSize: 14 * textScale,
-                color: parseColor(msg.color),
+                color: parseColor(msg.color, background: surface),
                 decoration: TextDecoration.none,
               ),
               recognizer: span.recognizer,
@@ -2255,7 +2255,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   style: TextStyle(
                     fontSize: 14 * s,
                     fontWeight: FontWeight.w600,
-                    color: parseColor(msg.color),
+                    color: parseColor(msg.color, background: surface),
                     decoration: TextDecoration.none,
                   ),
                   recognizer: TapGestureRecognizer()
