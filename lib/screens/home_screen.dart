@@ -1969,15 +1969,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       children: [
         NotificationListener<ScrollNotification>(
           onNotification: (notification) {
-            if (notification is UserScrollNotification) {
-              final isScrolledUp = notification.metrics.pixels > 50.0;
-              if (isScrolledUp && (_isAtBottom[channel] ?? true)) {
+            if (notification is ScrollUpdateNotification) {
+              final scrolledUp = notification.metrics.pixels > 50.0;
+              if (scrolledUp && (_isAtBottom[channel] ?? true)) {
                 setState(() => _isAtBottom[channel] = false);
-              }
-            } else if (notification is ScrollEndNotification) {
-              final newAtBottom = notification.metrics.pixels <= 50.0;
-              if (newAtBottom != (_isAtBottom[channel] ?? true)) {
-                setState(() => _isAtBottom[channel] = newAtBottom);
+              } else if (!scrolledUp && !(_isAtBottom[channel] ?? true)) {
+                setState(() => _isAtBottom[channel] = true);
               }
             }
             return false;
@@ -2070,16 +2067,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           Positioned(
             right: 16,
             bottom: 16,
-            child: FloatingActionButton.small(
+            child: FloatingActionButton(
               heroTag: 'scroll_down_$channel',
               onPressed: () {
                 _isAtBottom[channel] = true;
                 if (mounted) setState(() {});
-                _scrollCtrl(channel).animateTo(
-                  0,
-                  duration: const Duration(milliseconds: 200),
-                  curve: Curves.easeOut,
-                );
+                _scrollCtrl(channel).jumpTo(0);
               },
               child: const Icon(Icons.keyboard_arrow_down),
             ),

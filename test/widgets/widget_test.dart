@@ -1344,4 +1344,126 @@ void main() {
       expect(find.textContaining('thread reply'), findsAtLeast(1));
     });
   });
+
+  group('Chat pause', () {
+    testWidgets(
+      'scroll-to-bottom FAB appears when scrolled up and hides on tap',
+      (WidgetTester tester) async {
+        final now = DateTime.now();
+        final manyMessages = List.generate(
+          50,
+          (i) => TwitchMessage(
+            username: 'user$i',
+            text: 'message number $i with some extra text to fill the line',
+            channel: 'testchannel',
+            messageId: 'msg-$i',
+            timestamp: now.subtract(Duration(minutes: 50 - i)),
+          ),
+        );
+        final fakeEventSub = _FakeEventSubService();
+        final fakeIrc = _FakeIrcService();
+        final fakeRecent = _ConfigurableRecentMessagesService(manyMessages);
+
+        await tester.pumpWidget(
+          TwitchChatApp(
+            eventSubService: fakeEventSub,
+            ircService: fakeIrc,
+            recentMessagesService: fakeRecent,
+          ),
+        );
+        await tester.pump();
+
+        await tester.tap(find.byIcon(Icons.add));
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextField).last, 'testchannel');
+        await tester.tap(find.text('Join').last);
+        await tester.pump();
+        await tester.pump();
+
+        // Initially at bottom — FAB should not be visible
+        expect(find.byIcon(Icons.keyboard_arrow_down), findsNothing);
+
+        // Scroll up to trigger pause (with reverse:true, drag DOWN = scroll UP)
+        await tester.drag(find.byType(ListView).first, const Offset(0, 500));
+        await tester.pump();
+        await tester.pump();
+
+        // FAB should now be visible
+        expect(find.byIcon(Icons.keyboard_arrow_down), findsOneWidget);
+
+        // Tap FAB to scroll back to bottom
+        await tester.tap(find.byIcon(Icons.keyboard_arrow_down));
+        await tester.pump();
+        await tester.pump();
+
+        // FAB should be gone
+        expect(find.byIcon(Icons.keyboard_arrow_down), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'chat stays paused when new messages arrive while scrolled up',
+      (WidgetTester tester) async {
+        final now = DateTime.now();
+        final manyMessages = List.generate(
+          50,
+          (i) => TwitchMessage(
+            username: 'user$i',
+            text: 'message number $i',
+            channel: 'testchannel',
+            messageId: 'msg-$i',
+            timestamp: now.subtract(Duration(minutes: 50 - i)),
+          ),
+        );
+        final fakeEventSub = _TestEventSubService();
+        final fakeIrc = _FakeIrcService();
+        final fakeRecent = _ConfigurableRecentMessagesService(manyMessages);
+
+        await tester.pumpWidget(
+          TwitchChatApp(
+            eventSubService: fakeEventSub,
+            ircService: fakeIrc,
+            recentMessagesService: fakeRecent,
+          ),
+        );
+        await tester.pump();
+
+        await tester.tap(find.byIcon(Icons.add));
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextField).last, 'testchannel');
+        await tester.tap(find.text('Join').last);
+        await tester.pump();
+        await tester.pump();
+
+        // Scroll up — FAB appears (with reverse:true, drag DOWN = scroll UP)
+        await tester.drag(find.byType(ListView).first, const Offset(0, 500));
+        await tester.pump();
+        await tester.pump();
+        expect(find.byIcon(Icons.keyboard_arrow_down), findsOneWidget);
+
+        // Emit a new message while paused
+        fakeEventSub.emitMessage(
+          TwitchMessage(
+            username: 'newuser',
+            text: 'new message while paused',
+            channel: 'testchannel',
+            messageId: 'new-msg',
+            timestamp: DateTime.now(),
+          ),
+        );
+        await tester.pump();
+
+        // FAB should still be visible — chat did not auto-scroll
+        expect(find.byIcon(Icons.keyboard_arrow_down), findsOneWidget);
+
+        // Tap FAB to resume
+        await tester.tap(find.byIcon(Icons.keyboard_arrow_down));
+        await tester.pump();
+        await tester.pump();
+
+        // FAB should be gone
+        expect(find.byIcon(Icons.keyboard_arrow_down), findsNothing);
+      },
+    );
+  });
 }
