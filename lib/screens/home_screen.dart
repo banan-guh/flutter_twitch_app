@@ -92,12 +92,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   StreamSubscription<IrcNoticeEvent>? _ircNoticeSub;
   StreamSubscription<IrcNoticeEvent>? _ircJtvSub;
   StreamSubscription<IrcMessage>? _ircOwnMsgSub;
+  StreamSubscription<String>? _userColorSub;
 
   final _ownMessageIds = <String>{};
   int _localCounter = 0;
   final _pendingLocals = <String, _PendingLocal>{};
 
   String? _currentUserLogin;
+  String? _currentUserColor;
   String? _currentUserId;
   String? _lastSentText;
   bool _wasConnected = false;
@@ -113,6 +115,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
     _loadMaxMessages();
     _loadUiScale();
+    _loadChannels();
     _connect();
     _emoteManager.accessToken = widget.twitchAuth.accessToken;
     _emoteManager.preloadGlobalEmotes();
@@ -120,6 +123,59 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _badgeService.fetchGlobalBadges(widget.twitchAuth);
     widget.twitchAuth.addListener(_onAuthChanged);
     _focusNode.addListener(_onInputFocusChanged);
+  }
+
+  Future<void> _saveChannels() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('channels', List.of(_channels));
+  }
+
+  Future<void> _loadChannels() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getStringList('channels');
+    if (saved == null || saved.isEmpty) return;
+    for (final name in saved) {
+      if (_channels.contains(name)) continue;
+      _channels.add(name);
+      _channelMessages.putIfAbsent(name, () => []);
+    }
+    _channelNotifier.value = List.of(_channels);
+    _selectedChannel = _channels.first;
+    if (mounted) setState(() {});
+    for (final name in saved) {
+      _subscribeChannel(name);
+      _recentMessages.fetchRecent(name).then((history) {
+        if (!mounted) return;
+        _historyLoaded.add(name);
+        setState(() {
+          if (history.isEmpty) {
+            _addSystemMessage(name, 'No chat history available');
+          } else {
+            final existing = _channelMessages[name]!;
+            final existingIds = existing.map((m) => m.messageId).toSet();
+            for (final msg in history) {
+              if (msg.messageId == null ||
+                  !existingIds.contains(msg.messageId)) {
+                existing.insert(0, msg);
+              }
+              if (msg.messageId != null) {
+                _messageKeys.putIfAbsent(
+                  '$name:${msg.messageId}',
+                  () => GlobalKey(),
+                );
+              }
+            }
+            _truncateChannelMessages(name);
+          }
+        });
+        _maybeAddConnected(name);
+      }).catchError((e) {
+        if (!mounted) return;
+        _historyLoaded.add(name);
+        _addSystemMessage(name, 'Failed to load chat history ($e)');
+        _maybeAddConnected(name);
+      });
+    }
   }
 
   void _onInputFocusChanged() {
@@ -203,6 +259,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _focusNode.removeListener(_onInputFocusChanged);
     _focusNode.dispose();
     _ircOwnMsgSub?.cancel();
+    _userColorSub?.cancel();
     _ircBanSub?.cancel();
     _ircNoticeSub?.cancel();
     _ircJtvSub?.cancel();
@@ -268,6 +325,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     _ircOwnMsgSub?.cancel();
     _ircOwnMsgSub = _ircRead.onOwnMessage.listen(_onOwnIrcMessage);
+
+    _userColorSub?.cancel();
+    _userColorSub = _ircRead.onUserColor.listen((color) {
+      _currentUserColor = color;
+    });
 
     if (!auth.isConfigured) return;
 
@@ -423,6 +485,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         : null;
     if (channel == null || ircMsg.trailing == null) return;
 
+    final colorTag = ircMsg.tags['color'];
+    if (colorTag != null && colorTag.isNotEmpty) {
+      _currentUserColor = colorTag;
+    }
+
     final messageId = ircMsg.tags['id'];
     final text = ircMsg.trailing!;
 
@@ -432,6 +499,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
 
     String? pendingKey;
+    TwitchMessage? pendingMsg;
     for (final entry in _pendingLocals.entries) {
       if (entry.value.channel == channel && entry.value.text == text) {
         pendingKey = entry.key;
@@ -439,6 +507,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       }
     }
     if (pendingKey != null) {
+      final existing = _channelMessages[channel];
+      if (existing != null) {
+        final idx = existing.indexWhere((m) => m.messageId == pendingKey);
+        if (idx != -1) {
+          pendingMsg = existing[idx];
+        }
+      }
       _pendingLocals.remove(pendingKey);
       _channelMessages[channel]?.removeWhere(
         (m) => m.messageId == pendingKey,
@@ -459,7 +534,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final color = ircMsg.tags['color'] != null &&
             ircMsg.tags['color']!.isNotEmpty
         ? ircMsg.tags['color']!
-        : pickColor(displayName);
+        : pickColor(displayName.toLowerCase());
 
     final msg = TwitchMessage(
       username: displayName,
@@ -469,6 +544,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       timestamp: timestamp,
       userId: userId,
       color: color,
+      replyToParentId: pendingMsg?.replyToParentId,
+      replyToUser: pendingMsg?.replyToUser,
+      replyToText: pendingMsg?.replyToText,
     );
 
     _channelMessages.putIfAbsent(channel, () => []);
@@ -505,7 +583,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       text: text,
       channel: channel,
       messageId: effectiveId,
-      color: pickColor(login),
+      color: _currentUserColor ?? pickColor(login.toLowerCase()),
       userId: _currentUserId,
       replyToParentId: replyTo?.messageId,
       replyToUser: replyTo?.username,
@@ -697,6 +775,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _channelMessages.putIfAbsent(name, () => []);
       _selectedChannel = name;
     });
+    _saveChannels();
     _focusNode.requestFocus();
 
     final loadingMsg = TwitchMessage(
@@ -933,6 +1012,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _selectedChannel = _channels.isNotEmpty ? _channels.last : null;
       }
     });
+    _saveChannels();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) setState(() {});
     });
@@ -1761,8 +1841,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           SliverGrid(
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 5,
-              mainAxisSpacing: 2,
-              crossAxisSpacing: 2,
+              mainAxisSpacing: 10,
+              crossAxisSpacing: 10,
               childAspectRatio: 1,
             ),
             delegate: SliverChildBuilderDelegate(
@@ -1793,16 +1873,20 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildEmoteGrid(List<GenericEmote> emotes) {
+    const maxCells = 15;
+    final count = emotes.length > maxCells ? maxCells : emotes.length;
     return GridView.builder(
       padding: const EdgeInsets.all(4),
+      physics: const NeverScrollableScrollPhysics(),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 5,
-        mainAxisSpacing: 2,
-        crossAxisSpacing: 2,
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
         childAspectRatio: 1,
       ),
-      itemCount: emotes.length,
-      itemBuilder: (_, i) => _buildEmoteGridItem(emotes[i]),
+      itemCount: maxCells,
+      itemBuilder: (_, i) =>
+          i < count ? _buildEmoteGridItem(emotes[i]) : const SizedBox(),
     );
   }
 
@@ -1903,176 +1987,200 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Scaffold(
+    return PopScope(
+      canPop: _activePanel == OverlayPanel.closed,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _closePanel();
+      },
+      child: Scaffold(
       body: Column(
         children: [
-            SafeArea(
-              bottom: false,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: Row(
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final fullHeight = constraints.maxHeight;
+                final keyboardH =
+                    MediaQuery.of(context).viewInsets.bottom;
+                final statusBarH = MediaQuery.of(context).padding.top;
+                final emoteH = keyboardH > 0
+                    ? fullHeight
+                    : (fullHeight * 0.55).clamp(150.0, fullHeight);
+                final emoteTop = keyboardH > 0 ? 0.0 : fullHeight - emoteH;
+                return Stack(
+                  clipBehavior: Clip.hardEdge,
                   children: [
-                    const Spacer(),
-                    IconButton(
-                      icon: const Icon(Icons.add),
-                      tooltip: 'Join channel',
-                      onPressed: _addChannelDialog,
-                    ),
-                    IconButton(
-                      icon: Icon(
-                        Icons.notifications_active,
-                        color: _unreadMentions > 0
-                            ? theme.colorScheme.error
-                            : null,
-                      ),
-                      tooltip: 'Mentions',
-                      onPressed: () {
-                        _unreadMentions = 0;
-                        if (mounted) setState(() {});
-                        if (_activePanel == OverlayPanel.mentions) {
-                          _closePanel();
-                        } else {
-                          _showMentionsView();
-                        }
-                      },
-                    ),
-                    SettingsButton(
-                      twitchAuth: widget.twitchAuth,
-                      onThemeChanged: widget.onThemeChanged,
-                      channelNotifier: _channelNotifier,
-                      onLeaveChannel: _removeChannel,
-                      onAddChannel: _addChannel,
-                      onSettingsClosed: () {
-                        if (mounted) setState(() {});
-                        _connect();
-                      },
-                      eventSubMessageStream: _eventSub.onMessage,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            Expanded(
-              child: _channels.isNotEmpty
-                  ? LayoutBuilder(
-                      builder: (context, constraints) {
-                        final stackHeight = constraints.maxHeight;
-                        return Stack(
-                          clipBehavior: Clip.hardEdge,
-                          children: [
-                            ListenableBuilder(
-                              listenable: _chatVersion,
-                              builder: (context, _) => TabbedLayout(
-                                tabs: _channels,
-                                selectedIndex: _channels.indexOf(
-                                  _selectedChannel ?? '',
+                    Column(
+                      children: [
+                        SafeArea(
+                          bottom: false,
+                          child: Padding(
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 4),
+                            child: Row(
+                              children: [
+                                const Spacer(),
+                                IconButton(
+                                  icon: const Icon(Icons.add),
+                                  tooltip: 'Join channel',
+                                  onPressed: _addChannelDialog,
                                 ),
-                                onSelectedIndexChanged: _onChannelChanged,
-                                pageBuilder: (_, i) =>
-                                    _buildChat(_channels[i]),
-                                tabBuilder: (_, i) {
-                                  final channel = _channels[i];
-                                  final selected =
-                                      channel == _selectedChannel;
-                                  return Text(
-                                    channel,
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: selected ||
-                                              _channelsWithUnread.contains(
-                                                channel,
-                                              )
-                                          ? FontWeight.w600
-                                          : FontWeight.normal,
-                                      color: selected
-                                          ? theme.colorScheme.primary
-                                          : _channelsWithUnread.contains(
-                                                    channel,
-                                                  )
-                                              ? Colors.white
-                                              : null,
-                                    ),
-                                  );
-                                },
-                              ),
+                                IconButton(
+                                  icon: Icon(
+                                    Icons.notifications_active,
+                                    color: _unreadMentions > 0
+                                        ? theme.colorScheme.error
+                                        : null,
+                                  ),
+                                  tooltip: 'Mentions',
+                                  onPressed: () {
+                                    _unreadMentions = 0;
+                                    if (mounted) setState(() {});
+                                    if (_activePanel ==
+                                        OverlayPanel.mentions) {
+                                      _closePanel();
+                                    } else {
+                                      _showMentionsView();
+                                    }
+                                  },
+                                ),
+                                SettingsButton(
+                                  twitchAuth: widget.twitchAuth,
+                                  onThemeChanged: widget.onThemeChanged,
+                                  channelNotifier: _channelNotifier,
+                                  onLeaveChannel: _removeChannel,
+                                  onAddChannel: _addChannel,
+                                  onSettingsClosed: () {
+                                    if (mounted) setState(() {});
+                                    _connect();
+                                  },
+                                  eventSubMessageStream:
+                                      _eventSub.onMessage,
+                                ),
+                              ],
                             ),
-                            if (_activePanel == OverlayPanel.thread)
-                              SlidePanel(
-                                animation: _panelAnimController,
-                                stackHeight: stackHeight,
-                                child: _buildThreadPanel(stackHeight),
-                              ),
-                            if (_activePanel == OverlayPanel.mentions)
-                              SlidePanel(
-                                animation: _panelAnimController,
-                                stackHeight: stackHeight,
-                                child: _buildMentionsPanel(stackHeight),
-                              ),
-                            if (_activePanel == OverlayPanel.emotes)
-                              SlidePanel(
-                                animation: _panelAnimController,
-                                stackHeight: stackHeight,
-                                top: stackHeight * 0.6,
-                                child: _buildEmoteMenu(stackHeight * 0.4),
-                              ),
-                          ],
-                        );
-                      },
-                    )
-                  : _buildEmpty(),
-            ),
-            ColoredBox(
-              color: theme.scaffoldBackgroundColor,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _MessageInput(
-                    controller: _messageController,
-                    focusNode: _focusNode,
-                    onSend: _sendMessage,
-                    onSendLongPress: _onSendLongPress,
-                    onEmoteToggle: () {
-                      if (_activePanel == OverlayPanel.emotes) {
-                        _closePanel();
-                      } else {
-                        _showEmoteMenu();
-                      }
-                    },
-                    replyToMsg: _replyToMsg,
-                    onCancelReply: () => setState(() => _replyToMsg = null),
-                    enabled:
-                        _activePanel != OverlayPanel.mentions &&
-                            widget.twitchAuth.isConfigured,
-                    hintText: !widget.twitchAuth.isConfigured
-                        ? 'Connect an account to chat'
-                        : _activePanel == OverlayPanel.thread
-                        ? 'Reply to thread...'
-                        : _activePanel == OverlayPanel.mentions
-                        ? 'Type a message...'
-                        : null,
-                  ),
-                  if (_chatStatus[_selectedChannel] != null &&
-                      _chatStatus[_selectedChannel]!.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(
-                        left: 12,
-                        right: 12,
-                        bottom: 4,
-                      ),
-                      child: Text(
-                        _chatStatus[_selectedChannel]!,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey,
+                          ),
                         ),
-                        textAlign: TextAlign.center,
-                      ),
+                        Expanded(
+                          child: _channels.isNotEmpty
+                              ? ListenableBuilder(
+                                  listenable: _chatVersion,
+                                  builder: (context, _) => TabbedLayout(
+                                    tabs: _channels,
+                                    selectedIndex: _channels.indexOf(
+                                      _selectedChannel ?? '',
+                                    ),
+                                    onSelectedIndexChanged:
+                                        _onChannelChanged,
+                                    pageBuilder: (_, i) =>
+                                        _buildChat(_channels[i]),
+                                    tabBuilder: (_, i) {
+                                      final channel = _channels[i];
+                                      final selected =
+                                          channel == _selectedChannel;
+                                      return Text(
+                                        channel,
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: selected ||
+                                                  _channelsWithUnread
+                                                      .contains(channel)
+                                              ? FontWeight.w600
+                                              : FontWeight.normal,
+                                          color: selected
+                                              ? theme
+                                                  .colorScheme.primary
+                                              : _channelsWithUnread
+                                                      .contains(channel)
+                                                  ? Colors.white
+                                                  : null,
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                )
+                              : _buildEmpty(),
+                        ),
+                      ],
                     ),
-                ],
-              ),
+                    if (_activePanel == OverlayPanel.thread)
+                      SlidePanel(
+                        animation: _panelAnimController,
+                        stackHeight: fullHeight,
+                        top: statusBarH,
+                        child: _buildThreadPanel(fullHeight - statusBarH),
+                      ),
+                    if (_activePanel == OverlayPanel.mentions)
+                      SlidePanel(
+                        animation: _panelAnimController,
+                        stackHeight: fullHeight,
+                        top: statusBarH,
+                        child: _buildMentionsPanel(fullHeight - statusBarH),
+                      ),
+                    if (_activePanel == OverlayPanel.emotes)
+                      SlidePanel(
+                        animation: _panelAnimController,
+                        stackHeight: fullHeight,
+                        top: emoteTop,
+                        child: _buildEmoteMenu(emoteH),
+                      ),
+                  ],
+                );
+              },
             ),
-          ],
-        ),
+          ),
+          ColoredBox(
+            color: theme.scaffoldBackgroundColor,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _MessageInput(
+                  controller: _messageController,
+                  focusNode: _focusNode,
+                  onSend: _sendMessage,
+                  onSendLongPress: _onSendLongPress,
+                  onEmoteToggle: () {
+                    if (_activePanel == OverlayPanel.emotes) {
+                      _closePanel();
+                    } else {
+                      _showEmoteMenu();
+                    }
+                  },
+                  replyToMsg: _replyToMsg,
+                  onCancelReply: () =>
+                      setState(() => _replyToMsg = null),
+                  enabled: _activePanel != OverlayPanel.mentions &&
+                      widget.twitchAuth.isConfigured,
+                  hintText: !widget.twitchAuth.isConfigured
+                      ? 'Connect an account to chat'
+                      : _activePanel == OverlayPanel.thread
+                      ? 'Reply to thread...'
+                      : _activePanel == OverlayPanel.mentions
+                      ? 'Type a message...'
+                      : null,
+                ),
+                if (_chatStatus[_selectedChannel] != null &&
+                    _chatStatus[_selectedChannel]!.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(
+                      left: 12,
+                      right: 12,
+                      bottom: 4,
+                    ),
+                    child: Text(
+                      _chatStatus[_selectedChannel]!,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
     );
   }
 

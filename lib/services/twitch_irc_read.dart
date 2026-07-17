@@ -19,8 +19,10 @@ class IrcReadService {
   int _pingsWithoutPong = 0;
 
   final _ownMessageController = StreamController<IrcMessage>.broadcast();
+  final _userColorController = StreamController<String>.broadcast();
 
   Stream<IrcMessage> get onOwnMessage => _ownMessageController.stream;
+  Stream<String> get onUserColor => _userColorController.stream;
 
   bool get isConnected => _channel != null;
 
@@ -132,6 +134,17 @@ class IrcReadService {
         continue;
       }
 
+      if (line.contains('GLOBALUSERSTATE') || line.contains('USERSTATE')) {
+        final msg = parseIrcMessage(line);
+        if (msg != null) {
+          final color = msg.tags['color'];
+          if (color != null && color.isNotEmpty) {
+            _userColorController.add(color);
+          }
+        }
+        continue;
+      }
+
       if (line.contains('PRIVMSG ') && _username != null) {
         final msg = parseIrcMessage(line);
         if (msg != null &&
@@ -170,5 +183,6 @@ class IrcReadService {
     _streamSub?.cancel();
     _channel?.sink.close();
     _ownMessageController.close();
+    _userColorController.close();
   }
 }

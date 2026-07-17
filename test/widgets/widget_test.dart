@@ -348,7 +348,7 @@ void main() {
     expect(find.text('Mentions / Whispers'), findsOneWidget);
     expect(find.text('No mentions or whispers'), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.notifications_active));
+    await tester.tap(find.byIcon(Icons.arrow_back));
     await tester.pumpAndSettle();
 
     expect(find.text('Mentions / Whispers'), findsNothing);
