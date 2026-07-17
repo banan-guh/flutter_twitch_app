@@ -79,29 +79,12 @@ class ChatMessageTile extends StatelessWidget {
     }
 
     if (isHighlighted) {
-      child = Container(
-        color: Colors.red.withValues(alpha: 0.06),
-        child: Stack(
-          children: [
-            child,
-            Positioned(
-              left: 0,
-              top: 0,
-              bottom: 0,
-              child: Container(
-                width: 4,
-                color: Colors.red.withValues(alpha: 0.4),
-                alignment: Alignment.topCenter,
-                padding: const EdgeInsets.only(top: 4),
-                child: Icon(
-                  Icons.alternate_email,
-                  size: 10,
-                  color: Colors.red.withValues(alpha: 0.6),
-                ),
-              ),
-            ),
-          ],
-        ),
+      final isDark = Theme.of(context).brightness == Brightness.dark;
+      child = ColoredBox(
+        color: isDark
+            ? const Color(0xFF773031)
+            : const Color(0xFFEF9A9A),
+        child: child,
       );
     }
 

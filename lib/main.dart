@@ -16,6 +16,7 @@ class TwitchChatApp extends StatefulWidget {
   final IrcService? ircService;
   final IrcReadService? ircReadService;
   final RecentMessagesService? recentMessagesService;
+  final String? initialCurrentUserLogin;
 
   const TwitchChatApp({
     super.key,
@@ -23,6 +24,7 @@ class TwitchChatApp extends StatefulWidget {
     this.ircService,
     this.ircReadService,
     this.recentMessagesService,
+    this.initialCurrentUserLogin,
   });
 
   @override
@@ -84,6 +86,7 @@ class _TwitchChatAppState extends State<TwitchChatApp> {
         ircService: widget.ircService,
         ircReadService: widget.ircReadService,
         recentMessagesService: widget.recentMessagesService,
+        initialCurrentUserLogin: widget.initialCurrentUserLogin,
       ),
     );
   }

@@ -31,6 +31,7 @@ class HomeScreen extends StatefulWidget {
   final IrcService? ircService;
   final IrcReadService? ircReadService;
   final RecentMessagesService? recentMessagesService;
+  final String? initialCurrentUserLogin;
 
   const HomeScreen({
     super.key,
@@ -40,6 +41,7 @@ class HomeScreen extends StatefulWidget {
     this.ircService,
     this.ircReadService,
     this.recentMessagesService,
+    this.initialCurrentUserLogin,
   });
 
   @override
@@ -66,12 +68,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   final _channelMessages = <String, List<TwitchMessage>>{};
   final _scrollControllers = <String, ScrollController>{};
   final _isAtBottom = <String, bool>{};
+  final _frozenSnapshot = <String, List<TwitchMessage>>{};
   final _historyLoaded = <String>{};
   final _messageKeys = <String, GlobalKey>{};
   final _chatStatus = <String, String>{};
   final _channelUserIds = <String, String>{};
   int _unreadMentions = 0;
   final _channelsWithUnread = <String>{};
+  final _channelsWithUnreadMentions = <String>{};
+  final _unreadMentionsPerChannel = <String, int>{};
 
   TwitchMessage? _replyToMsg;
   TwitchMessage? _openThreadRoot;
@@ -110,6 +115,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    _currentUserLogin = widget.initialCurrentUserLogin;
     _threadAnimCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 250),
@@ -468,7 +474,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         isReplyToMe;
 
     if (isMention) {
-      if (!msg.isHighlighted) _unreadMentions++;
+      if (!msg.isHighlighted && channel != _selectedChannel) {
+        _unreadMentions++;
+        _channelsWithUnreadMentions.add(channel);
+        _unreadMentionsPerChannel[channel] =
+            (_unreadMentionsPerChannel[channel] ?? 0) + 1;
+      }
       msg.isHighlighted = true;
     }
 
@@ -1027,6 +1038,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _isAtBottom.remove(channel);
       _scrollControllers.remove(channel)?.dispose();
       _channelsWithUnread.remove(channel);
+      _channelsWithUnreadMentions.remove(channel);
+      _unreadMentionsPerChannel.remove(channel);
       if (_selectedChannel == channel) {
         _selectedChannel = _channels.isNotEmpty ? _channels.last : null;
       }
@@ -1523,6 +1536,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (_selectedChannel == channel) return;
     setState(() {
       _selectedChannel = channel;
+      _channelsWithUnread.remove(channel);
+      _channelsWithUnreadMentions.remove(channel);
+      final cleared = _unreadMentionsPerChannel.remove(channel) ?? 0;
+      if (cleared > 0) {
+        _unreadMentions -= cleared;
+        if (_unreadMentions < 0) _unreadMentions = 0;
+      }
       if (_activePanel == OverlayPanel.emotes) {
         _activePanel = OverlayPanel.closed;
       }
@@ -1621,6 +1641,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                     tooltip: 'Mentions',
                                     onPressed: () {
                                       _unreadMentions = 0;
+                                      _channelsWithUnreadMentions.clear();
+                                      _unreadMentionsPerChannel.clear();
                                       if (mounted) setState(() {});
                                       if (_activePanel ==
                                           OverlayPanel.mentions) {
@@ -1662,24 +1684,50 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                         final channel = _channels[i];
                                         final selected =
                                             channel == _selectedChannel;
-                                        return Text(
-                                          channel,
-                                          style: TextStyle(
-                                            fontSize: 14,
-                                            fontWeight:
-                                                selected ||
+                                        final hasUnreadMention =
+                                            _channelsWithUnreadMentions
+                                                .contains(channel);
+                                        return Stack(
+                                          clipBehavior: Clip.none,
+                                          children: [
+                                            Text(
+                                              channel,
+                                              style: TextStyle(
+                                                fontSize: 14,
+                                                fontWeight:
+                                                    selected ||
                                                     _channelsWithUnread
                                                         .contains(channel)
-                                                ? FontWeight.w600
-                                                : FontWeight.normal,
-                                            color: selected
-                                                ? theme.colorScheme.primary
-                                                : _channelsWithUnread.contains(
-                                                    channel,
-                                                  )
-                                                ? Colors.white
-                                                : null,
-                                          ),
+                                                    ? FontWeight.w600
+                                                    : FontWeight.normal,
+                                                color: selected
+                                                    ? theme.colorScheme.primary
+                                                    : _channelsWithUnread
+                                                        .contains(channel)
+                                                    ? Colors.white
+                                                    : null,
+                                              ),
+                                            ),
+                                            if (hasUnreadMention && !selected)
+                                              Positioned(
+                                                top: -2,
+                                                right: -4,
+                                                child: Container(
+                                                  key: const Key(
+                                                    'unread_mention_dot',
+                                                  ),
+                                                  width: 6,
+                                                  height: 6,
+                                                  decoration: BoxDecoration(
+                                                    color:
+                                                        theme
+                                                            .colorScheme
+                                                            .error,
+                                                    shape: BoxShape.circle,
+                                                  ),
+                                                ),
+                                              ),
+                                          ],
                                         );
                                       },
                                     ),
@@ -1954,7 +2002,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildChat(String channel) {
-    final msgs = _messages(channel);
+    final msgs = _frozenSnapshot[channel] ?? _messages(channel);
     final surface = Theme.of(context).colorScheme.surface;
     final systemScale = MediaQuery.textScalerOf(context).scale(1.0);
     final s = _uiScale * systemScale;
@@ -1972,9 +2020,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             if (notification is ScrollUpdateNotification) {
               final scrolledUp = notification.metrics.pixels > 50.0;
               if (scrolledUp && (_isAtBottom[channel] ?? true)) {
-                setState(() => _isAtBottom[channel] = false);
+                setState(() {
+                  _isAtBottom[channel] = false;
+                  _frozenSnapshot[channel] =
+                      List.of(_channelMessages[channel] ?? []);
+                });
               } else if (!scrolledUp && !(_isAtBottom[channel] ?? true)) {
-                setState(() => _isAtBottom[channel] = true);
+                setState(() {
+                  _isAtBottom[channel] = true;
+                  _frozenSnapshot.remove(channel);
+                });
               }
             }
             return false;
@@ -2071,6 +2126,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               heroTag: 'scroll_down_$channel',
               onPressed: () {
                 _isAtBottom[channel] = true;
+                _frozenSnapshot.remove(channel);
                 if (mounted) setState(() {});
                 _scrollCtrl(channel).jumpTo(0);
               },

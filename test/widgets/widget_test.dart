@@ -354,6 +354,238 @@ void main() {
     expect(find.text('Mentions / Whispers'), findsNothing);
   });
 
+  testWidgets(
+    'Mention in focused channel does not turn notification bell red',
+    (WidgetTester tester) async {
+      final eventSub = _TestEventSubService();
+      final irc = _FakeIrcService();
+      final recent = _ConfigurableRecentMessagesService(const []);
+      await tester.pumpWidget(
+        TwitchChatApp(
+          eventSubService: eventSub,
+          ircService: irc,
+          recentMessagesService: recent,
+          initialCurrentUserLogin: 'me',
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byIcon(Icons.add));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).last, 'a');
+      await tester.tap(find.text('Join'));
+      await tester.pump();
+
+      // 'a' is the selected channel; emit a mention there.
+      eventSub.emitMessage(
+        TwitchMessage(
+          username: 'bob',
+          text: 'hey @me how are you',
+          channel: 'a',
+          messageId: 'm1',
+        ),
+      );
+      await tester.pump();
+
+      final bell = tester.widget<Icon>(find.byIcon(Icons.notifications_active));
+      expect(bell.color, isNull);
+      expect(find.byKey(const Key('unread_mention_dot')), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'Unfocused-channel mention turns bell red and shows a red dot on the tab',
+    (WidgetTester tester) async {
+      final eventSub = _TestEventSubService();
+      final irc = _FakeIrcService();
+      final recent = _ConfigurableRecentMessagesService(const []);
+      await tester.pumpWidget(
+        TwitchChatApp(
+          eventSubService: eventSub,
+          ircService: irc,
+          recentMessagesService: recent,
+          initialCurrentUserLogin: 'me',
+        ),
+      );
+      await tester.pump();
+
+      // Join 'b' first, then 'a' so 'a' is selected and 'b' is unfocused.
+      for (final name in ['b', 'a']) {
+        await tester.tap(find.byIcon(Icons.add));
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextField).last, name);
+        await tester.tap(find.text('Join'));
+        await tester.pump();
+      }
+
+      eventSub.emitMessage(
+        TwitchMessage(
+          username: 'carol',
+          text: 'hello @me',
+          channel: 'b',
+          messageId: 'm2',
+        ),
+      );
+      await tester.pump();
+
+      final bell = tester.widget<Icon>(find.byIcon(Icons.notifications_active));
+      expect(bell.color, isNotNull);
+      expect(find.byKey(const Key('unread_mention_dot')), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Switching to a channel with unread mention clears its dot and name color',
+    (WidgetTester tester) async {
+      final eventSub = _TestEventSubService();
+      final irc = _FakeIrcService();
+      final recent = _ConfigurableRecentMessagesService(const []);
+      await tester.pumpWidget(
+        TwitchChatApp(
+          eventSubService: eventSub,
+          ircService: irc,
+          recentMessagesService: recent,
+          initialCurrentUserLogin: 'me',
+        ),
+      );
+      await tester.pump();
+
+      for (final name in ['b', 'a']) {
+        await tester.tap(find.byIcon(Icons.add));
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextField).last, name);
+        await tester.tap(find.text('Join'));
+        await tester.pump();
+      }
+
+      eventSub.emitMessage(
+        TwitchMessage(
+          username: 'carol',
+          text: 'hello @me',
+          channel: 'b',
+          messageId: 'm3',
+        ),
+      );
+      await tester.pump();
+      expect(find.byKey(const Key('unread_mention_dot')), findsOneWidget);
+
+      // Select 'b' (clears its unread state), then switch back to 'a' so 'b'
+      // is unselected again. A previously-viewed channel must revert to grey.
+      Future<void> tapNamed(String name) async {
+        final barText = find.text(name).first;
+        await tester.ensureVisible(barText);
+        await tester.pump();
+        await tester.tap(barText);
+        await tester.pumpAndSettle();
+        await tester.pump();
+      }
+
+      await tapNamed('b');
+      expect(find.byKey(const Key('unread_mention_dot')), findsNothing);
+      await tapNamed('a');
+
+      final text = tester.widget<Text>(find.text('b'));
+      expect(text.style?.color, isNull);
+      expect(find.byKey(const Key('unread_mention_dot')), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'Opening mentions panel clears the bell color and per-channel dot',
+    (WidgetTester tester) async {
+      final eventSub = _TestEventSubService();
+      final irc = _FakeIrcService();
+      final recent = _ConfigurableRecentMessagesService(const []);
+      await tester.pumpWidget(
+        TwitchChatApp(
+          eventSubService: eventSub,
+          ircService: irc,
+          recentMessagesService: recent,
+          initialCurrentUserLogin: 'me',
+        ),
+      );
+      await tester.pump();
+
+      for (final name in ['b', 'a']) {
+        await tester.tap(find.byIcon(Icons.add));
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextField).last, name);
+        await tester.tap(find.text('Join'));
+        await tester.pump();
+      }
+
+      eventSub.emitMessage(
+        TwitchMessage(
+          username: 'carol',
+          text: 'hello @me',
+          channel: 'b',
+          messageId: 'm4',
+        ),
+      );
+      await tester.pump();
+      expect(find.byKey(const Key('unread_mention_dot')), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.notifications_active));
+      await tester.pumpAndSettle();
+
+      final bell = tester.widget<Icon>(find.byIcon(Icons.notifications_active));
+      expect(bell.color, isNull);
+      expect(find.byKey(const Key('unread_mention_dot')), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'Switching to the channel with the ping clears the notification bell color',
+    (WidgetTester tester) async {
+      final eventSub = _TestEventSubService();
+      final irc = _FakeIrcService();
+      final recent = _ConfigurableRecentMessagesService(const []);
+      await tester.pumpWidget(
+        TwitchChatApp(
+          eventSubService: eventSub,
+          ircService: irc,
+          recentMessagesService: recent,
+          initialCurrentUserLogin: 'me',
+        ),
+      );
+      await tester.pump();
+
+      for (final name in ['b', 'a']) {
+        await tester.tap(find.byIcon(Icons.add));
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextField).last, name);
+        await tester.tap(find.text('Join'));
+        await tester.pump();
+      }
+
+      eventSub.emitMessage(
+        TwitchMessage(
+          username: 'carol',
+          text: 'hello @me',
+          channel: 'b',
+          messageId: 'm5',
+        ),
+      );
+      await tester.pump();
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.notifications_active)).color,
+        isNotNull,
+      );
+
+      final barText = find.text('b').first;
+      await tester.ensureVisible(barText);
+      await tester.pump();
+      await tester.tap(barText);
+      await tester.pumpAndSettle();
+      await tester.pump();
+
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.notifications_active)).color,
+        isNull,
+      );
+    },
+  );
+
   testWidgets('Adding second channel switches to it immediately', (
     WidgetTester tester,
   ) async {
@@ -1402,7 +1634,7 @@ void main() {
     );
 
     testWidgets(
-      'chat stays paused when new messages arrive while scrolled up',
+      'frozen snapshot prevents new messages from showing while scrolled up',
       (WidgetTester tester) async {
         final now = DateTime.now();
         final manyMessages = List.generate(
@@ -1453,16 +1685,85 @@ void main() {
         );
         await tester.pump();
 
-        // FAB should still be visible — chat did not auto-scroll
+        // FAB still visible — did not auto-scroll
         expect(find.byIcon(Icons.keyboard_arrow_down), findsOneWidget);
+
+        // New message text NOT visible — frozen snapshot hides it
+        expect(find.textContaining('new message while paused'), findsNothing);
+
+        // Tap FAB to resume (clears snapshot, scrolls to bottom)
+        await tester.tap(find.byIcon(Icons.keyboard_arrow_down));
+        await tester.pump();
+        await tester.pump();
+
+        // FAB gone
+        expect(find.byIcon(Icons.keyboard_arrow_down), findsNothing);
+
+        // New message IS now visible after snapshot is removed
+        expect(find.textContaining('new message while paused'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'system message while paused does not appear until unpause',
+      (WidgetTester tester) async {
+        final now = DateTime.now();
+        final manyMessages = List.generate(
+          50,
+          (i) => TwitchMessage(
+            username: 'user$i',
+            text: 'message number $i',
+            channel: 'testchannel',
+            messageId: 'msg-$i',
+            timestamp: now.subtract(Duration(minutes: 50 - i)),
+          ),
+        );
+        final fakeEventSub = _TestEventSubService();
+        final fakeIrc = _FakeIrcService();
+        final fakeRecent = _ConfigurableRecentMessagesService(manyMessages);
+
+        await tester.pumpWidget(
+          TwitchChatApp(
+            eventSubService: fakeEventSub,
+            ircService: fakeIrc,
+            recentMessagesService: fakeRecent,
+          ),
+        );
+        await tester.pump();
+
+        await tester.tap(find.byIcon(Icons.add));
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextField).last, 'testchannel');
+        await tester.tap(find.text('Join').last);
+        await tester.pump();
+        await tester.pump();
+
+        // Scroll up — FAB appears
+        await tester.drag(find.byType(ListView).first, const Offset(0, 500));
+        await tester.pump();
+        await tester.pump();
+        expect(find.byIcon(Icons.keyboard_arrow_down), findsOneWidget);
+
+        // Emit a system message while paused
+        final systemMsg = TwitchMessage(
+          username: '',
+          text: 'System notice while paused',
+          isSystem: true,
+          channel: 'testchannel',
+        );
+        fakeEventSub.emitMessage(systemMsg);
+        await tester.pump();
+
+        // System message should NOT appear in frozen view
+        expect(find.textContaining('System notice while paused'), findsNothing);
 
         // Tap FAB to resume
         await tester.tap(find.byIcon(Icons.keyboard_arrow_down));
         await tester.pump();
         await tester.pump();
 
-        // FAB should be gone
-        expect(find.byIcon(Icons.keyboard_arrow_down), findsNothing);
+        // System message IS now visible
+        expect(find.textContaining('System notice while paused'), findsOneWidget);
       },
     );
   });
