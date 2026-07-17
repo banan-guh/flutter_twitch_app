@@ -65,6 +65,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   String? _selectedChannel;
   final _channelMessages = <String, List<TwitchMessage>>{};
   final _scrollControllers = <String, ScrollController>{};
+  final _isAtBottom = <String, bool>{};
   final _historyLoaded = <String>{};
   final _messageKeys = <String, GlobalKey>{};
   final _chatStatus = <String, String>{};
@@ -147,6 +148,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       if (_channels.contains(name)) continue;
       _channels.add(name);
       _channelMessages.putIfAbsent(name, () => []);
+      _isAtBottom[name] = true;
     }
     _channelNotifier.value = List.of(_channels);
     _selectedChannel = _channels.first;
@@ -788,6 +790,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _channels.add(name);
       _channelNotifier.value = List.of(_channels);
       _channelMessages.putIfAbsent(name, () => []);
+      _isAtBottom[name] = true;
       _selectedChannel = name;
     });
     _saveChannels();
@@ -1021,6 +1024,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _channels.remove(channel);
       _channelNotifier.value = List.of(_channels);
       _channelMessages.remove(channel);
+      _isAtBottom.remove(channel);
       _scrollControllers.remove(channel)?.dispose();
       _channelsWithUnread.remove(channel);
       if (_selectedChannel == channel) {
@@ -1954,93 +1958,133 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final surface = Theme.of(context).colorScheme.surface;
     final systemScale = MediaQuery.textScalerOf(context).scale(1.0);
     final s = _uiScale * systemScale;
+    final atBottom = _isAtBottom[channel] ?? true;
 
     if (msgs.isEmpty) {
       return const Center(child: Text('No messages yet'));
     }
 
-    return ScrollbarTheme(
-      data: const ScrollbarThemeData(thickness: WidgetStatePropertyAll(0)),
-      child: ListView.builder(
-        key: ValueKey(channel),
-        controller: _scrollCtrl(channel),
-        reverse: true,
-        itemCount: msgs.length,
-        itemBuilder: (_, i) {
-          final msg = msgs[i];
+    return Stack(
+      clipBehavior: Clip.hardEdge,
+      children: [
+        NotificationListener<ScrollNotification>(
+          onNotification: (notification) {
+            if (notification is UserScrollNotification) {
+              final isScrolledUp = notification.metrics.pixels > 50.0;
+              if (isScrolledUp && (_isAtBottom[channel] ?? true)) {
+                setState(() => _isAtBottom[channel] = false);
+              }
+            } else if (notification is ScrollEndNotification) {
+              final newAtBottom = notification.metrics.pixels <= 50.0;
+              if (newAtBottom != (_isAtBottom[channel] ?? true)) {
+                setState(() => _isAtBottom[channel] = newAtBottom);
+              }
+            }
+            return false;
+          },
+          child: ScrollbarTheme(
+            data: const ScrollbarThemeData(thickness: WidgetStatePropertyAll(0)),
+            child: ListView.builder(
+              key: ValueKey(channel),
+              controller: _scrollCtrl(channel),
+              reverse: true,
+              itemCount: msgs.length,
+              itemBuilder: (_, i) {
+                final msg = msgs[i];
 
-          final key = msg.messageId != null
-              ? _messageKeys.putIfAbsent(
-                  '$channel:${msg.messageId}',
-                  () => GlobalKey(),
-                )
-              : null;
+                final key = msg.messageId != null
+                    ? _messageKeys.putIfAbsent(
+                        '$channel:${msg.messageId}',
+                        () => GlobalKey(),
+                      )
+                    : null;
 
-          Widget body;
-          final ts =
-              '${msg.timestamp.toLocal().hour.toString().padLeft(2, '0')}:${msg.timestamp.toLocal().minute.toString().padLeft(2, '0')}';
+                Widget body;
+                final ts =
+                    '${msg.timestamp.toLocal().hour.toString().padLeft(2, '0')}:${msg.timestamp.toLocal().minute.toString().padLeft(2, '0')}';
 
-          if (msg.isSystem) {
-            body = ChatMessageTile(
-              timestamp: ts,
-              isHistory: msg.isHistory,
-              children: parseTextWithLinks(msg.text),
-              bodyColor: msg.bodyColor,
-              useTextDecorationNone: true,
-              bodyFontSize: 14 * s,
-              timestampFontSize: 14 * s,
-              semanticsLabel: msg.text,
-            );
-          } else {
-            body = ChatMessageTile(
-              timestamp: ts,
-              deleted: msg.deleted,
-              isHistory: msg.isHistory,
-              bodyColor: msg.bodyColor,
-              bodyFontSize: 14 * s,
-              timestampFontSize: 14 * s,
-              children: [
-                ..._buildBadgeSpans(channel, msg, badgeScale: s),
-                TextSpan(
-                  text: msg.isAction ? '${msg.username} ' : '${msg.username}: ',
-                  style: TextStyle(
-                    fontSize: 14 * s,
-                    fontWeight: FontWeight.w600,
-                    color: parseColor(msg.color, background: surface),
-                    decoration: TextDecoration.none,
-                  ),
-                  recognizer: TapGestureRecognizer()
-                    ..onTap = () => _showUserProfile(msg.username, msg.userId),
-                ),
-                if (msg.isAction)
-                  ..._buildMessageSpans(
-                    msg,
-                    channel,
-                    surface,
-                    colored: true,
-                    textScale: s,
-                  )
-                else
-                  ..._buildMessageSpans(msg, channel, surface, textScale: s),
-              ],
-              useTextDecorationNone: true,
-              isHighlighted: msg.isHighlighted,
-              replyIndicator: msg.replyToUser != null
-                  ? _buildReplyIndicator(msg)
-                  : null,
-              onLongPress: () => _showMessageMenu(msg),
-              semanticsLabel: msg.isHighlighted
-                  ? 'Mention: $ts ${msg.username}: ${msg.text}'
-                  : '$ts ${msg.username}: ${msg.text}',
-            );
-          }
+                if (msg.isSystem) {
+                  body = ChatMessageTile(
+                    timestamp: ts,
+                    isHistory: msg.isHistory,
+                    children: parseTextWithLinks(msg.text),
+                    bodyColor: msg.bodyColor,
+                    useTextDecorationNone: true,
+                    bodyFontSize: 14 * s,
+                    timestampFontSize: 14 * s,
+                    semanticsLabel: msg.text,
+                  );
+                } else {
+                  body = ChatMessageTile(
+                    timestamp: ts,
+                    deleted: msg.deleted,
+                    isHistory: msg.isHistory,
+                    bodyColor: msg.bodyColor,
+                    bodyFontSize: 14 * s,
+                    timestampFontSize: 14 * s,
+                    children: [
+                      ..._buildBadgeSpans(channel, msg, badgeScale: s),
+                      TextSpan(
+                        text: msg.isAction ? '${msg.username} ' : '${msg.username}: ',
+                        style: TextStyle(
+                          fontSize: 14 * s,
+                          fontWeight: FontWeight.w600,
+                          color: parseColor(msg.color, background: surface),
+                          decoration: TextDecoration.none,
+                        ),
+                        recognizer: TapGestureRecognizer()
+                          ..onTap = () => _showUserProfile(msg.username, msg.userId),
+                      ),
+                      if (msg.isAction)
+                        ..._buildMessageSpans(
+                          msg,
+                          channel,
+                          surface,
+                          colored: true,
+                          textScale: s,
+                        )
+                      else
+                        ..._buildMessageSpans(msg, channel, surface, textScale: s),
+                    ],
+                    useTextDecorationNone: true,
+                    isHighlighted: msg.isHighlighted,
+                    replyIndicator: msg.replyToUser != null
+                        ? _buildReplyIndicator(msg)
+                        : null,
+                    onLongPress: () => _showMessageMenu(msg),
+                    semanticsLabel: msg.isHighlighted
+                        ? 'Mention: $ts ${msg.username}: ${msg.text}'
+                        : '$ts ${msg.username}: ${msg.text}',
+                  );
+                }
 
-          if (key != null) {
-            body = Container(key: key, child: body);
-          }
-          return body;
-        },
-      ),
+                if (key != null) {
+                  body = Container(key: key, child: body);
+                }
+                return body;
+              },
+            ),
+          ),
+        ),
+        if (!atBottom)
+          Positioned(
+            right: 16,
+            bottom: 16,
+            child: FloatingActionButton.small(
+              heroTag: 'scroll_down_$channel',
+              onPressed: () {
+                _isAtBottom[channel] = true;
+                if (mounted) setState(() {});
+                _scrollCtrl(channel).animateTo(
+                  0,
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOut,
+                );
+              },
+              child: const Icon(Icons.keyboard_arrow_down),
+            ),
+          ),
+      ],
     );
   }
 
