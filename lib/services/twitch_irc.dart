@@ -78,9 +78,9 @@ class IrcService {
         },
       );
 
+      _send('CAP REQ :twitch.tv/tags twitch.tv/commands');
       _send('PASS oauth:$_token');
       _send('NICK $_username');
-      _send('CAP REQ :twitch.tv/tags twitch.tv/commands');
 
       _pingTimer?.cancel();
       _pingTimer = Timer.periodic(const Duration(seconds: 15), (_) {
