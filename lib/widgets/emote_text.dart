@@ -43,7 +43,9 @@ class EmoteText {
 
     void flushBase() {
       if (currentBase == null) return;
-      spans.add(_buildEmoteSpan(currentBase!, onEmoteTap: onEmoteTap, scale: scale));
+      spans.add(
+        _buildEmoteSpan(currentBase!, onEmoteTap: onEmoteTap, scale: scale),
+      );
       if (pendingSpace != null) {
         spans.addAll(parseTextWithLinks(pendingSpace!));
         pendingSpace = null;

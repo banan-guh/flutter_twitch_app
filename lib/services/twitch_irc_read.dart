@@ -50,7 +50,9 @@ class IrcReadService {
           _scheduleReconnect();
         },
         onDone: () {
-          debugPrint('IRC read stream closed (code: ${_channel?.closeCode}, reason: ${_channel?.closeReason})');
+          debugPrint(
+            'IRC read stream closed (code: ${_channel?.closeCode}, reason: ${_channel?.closeReason})',
+          );
           _scheduleReconnect();
         },
       );
@@ -103,9 +105,7 @@ class IrcReadService {
         seconds: min(pow(2, _reconnectAttempt - 2).toInt(), 30),
       );
       final jitter = 0.75 + Random().nextDouble() * 0.5;
-      delay = Duration(
-        milliseconds: (base.inMilliseconds * jitter).toInt(),
-      );
+      delay = Duration(milliseconds: (base.inMilliseconds * jitter).toInt());
     }
     Future.delayed(delay, () {
       _reconnecting = false;
@@ -147,9 +147,7 @@ class IrcReadService {
 
       if (line.contains('PRIVMSG ') && _username != null) {
         final msg = parseIrcMessage(line);
-        if (msg != null &&
-            msg.command == 'PRIVMSG' &&
-            msg.prefix != null) {
+        if (msg != null && msg.command == 'PRIVMSG' && msg.prefix != null) {
           final sender = msg.prefix!.contains('!')
               ? msg.prefix!.split('!')[0].toLowerCase()
               : msg.prefix!.toLowerCase();

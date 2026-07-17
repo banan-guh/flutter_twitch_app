@@ -39,7 +39,11 @@ class TwitchEmoteProvider {
     debugPrint('Twitch channel body: ${res.body}');
     if (res.statusCode != 200) return [];
     final data = jsonDecode(res.body) as Map<String, dynamic>;
-    return _parseEmotes(data['data'] as List<dynamic>? ?? [], channel: true, channelName: channelName);
+    return _parseEmotes(
+      data['data'] as List<dynamic>? ?? [],
+      channel: true,
+      channelName: channelName,
+    );
   }
 
   static List<GenericEmote> _parseEmotes(

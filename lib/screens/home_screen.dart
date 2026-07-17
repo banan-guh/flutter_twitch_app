@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -74,15 +75,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   TwitchMessage? _replyToMsg;
   TwitchMessage? _openThreadRoot;
   OverlayPanel _activePanel = OverlayPanel.closed;
-  int _emoteTabIndex = 0;
-  List<GenericEmote> _cachedRecentEmotes = [];
-  bool _recentEmotesLoaded = false;
   int _maxMessagesPerChannel = 200;
   double _uiScale = 1.0;
 
-  late final AnimationController _panelAnimController;
-  final _threadScrollCtrl = ScrollController();
-  final _mentionsScrollCtrl = ScrollController();
+  late final AnimationController _threadAnimCtrl;
+  late final AnimationController _mentionsAnimCtrl;
+  late final AnimationController _emoteAnimCtrl;
+  final _threadPanelData = ValueNotifier<_ThreadPanelData?>(null);
+  final _mentionsPanelData = ValueNotifier<List<TwitchMessage>?>(null);
 
   StreamSubscription<TwitchMessage>? _messageSub;
   StreamSubscription<EventSubStatus>? _statusSub;
@@ -109,10 +109,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
-    _panelAnimController = AnimationController(
+    _threadAnimCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 250),
     );
+    _mentionsAnimCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 250),
+    );
+    _emoteAnimCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 250),
+    );
+    _chatVersion.addListener(_onPanelDataChanged);
     _loadMaxMessages();
     _loadUiScale();
     _loadChannels();
@@ -144,37 +153,40 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (mounted) setState(() {});
     for (final name in saved) {
       _subscribeChannel(name);
-      _recentMessages.fetchRecent(name).then((history) {
-        if (!mounted) return;
-        _historyLoaded.add(name);
-        setState(() {
-          if (history.isEmpty) {
-            _addSystemMessage(name, 'No chat history available');
-          } else {
-            final existing = _channelMessages[name]!;
-            final existingIds = existing.map((m) => m.messageId).toSet();
-            for (final msg in history) {
-              if (msg.messageId == null ||
-                  !existingIds.contains(msg.messageId)) {
-                existing.insert(0, msg);
+      _recentMessages
+          .fetchRecent(name)
+          .then((history) {
+            if (!mounted) return;
+            _historyLoaded.add(name);
+            setState(() {
+              if (history.isEmpty) {
+                _addSystemMessage(name, 'No chat history available');
+              } else {
+                final existing = _channelMessages[name]!;
+                final existingIds = existing.map((m) => m.messageId).toSet();
+                for (final msg in history) {
+                  if (msg.messageId == null ||
+                      !existingIds.contains(msg.messageId)) {
+                    existing.insert(0, msg);
+                  }
+                  if (msg.messageId != null) {
+                    _messageKeys.putIfAbsent(
+                      '$name:${msg.messageId}',
+                      () => GlobalKey(),
+                    );
+                  }
+                }
+                _truncateChannelMessages(name);
               }
-              if (msg.messageId != null) {
-                _messageKeys.putIfAbsent(
-                  '$name:${msg.messageId}',
-                  () => GlobalKey(),
-                );
-              }
-            }
-            _truncateChannelMessages(name);
-          }
-        });
-        _maybeAddConnected(name);
-      }).catchError((e) {
-        if (!mounted) return;
-        _historyLoaded.add(name);
-        _addSystemMessage(name, 'Failed to load chat history ($e)');
-        _maybeAddConnected(name);
-      });
+            });
+            _maybeAddConnected(name);
+          })
+          .catchError((e) {
+            if (!mounted) return;
+            _historyLoaded.add(name);
+            _addSystemMessage(name, 'Failed to load chat history ($e)');
+            _maybeAddConnected(name);
+          });
     }
   }
 
@@ -193,7 +205,20 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (mounted) setState(() {});
   }
 
-  void     _onAuthChanged() {
+  void _onPanelDataChanged() {
+    if (_activePanel == OverlayPanel.thread && _openThreadRoot != null) {
+      final channel = _openThreadRoot!.channel!;
+      _threadPanelData.value = _ThreadPanelData(
+        root: _openThreadRoot!,
+        messages: _computeThreadMessages(),
+        channel: channel,
+      );
+    } else if (_activePanel == OverlayPanel.mentions) {
+      _mentionsPanelData.value = _channelMessages[_mentionsChannel] ?? [];
+    }
+  }
+
+  void _onAuthChanged() {
     _emoteManager.accessToken = widget.twitchAuth.accessToken;
     _refreshEmotesAfterAuth();
   }
@@ -215,11 +240,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _emoteManager.resolveEmotes(channel, _channelUserIds[channel]);
         final userId = _channelUserIds[channel];
         if (userId != null) {
-          _badgeService.fetchChannelBadges(
-            widget.twitchAuth,
-            userId,
-            channel,
-          );
+          _badgeService.fetchChannelBadges(widget.twitchAuth, userId, channel);
         }
       }
     } catch (e) {
@@ -263,9 +284,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _ircBanSub?.cancel();
     _ircNoticeSub?.cancel();
     _ircJtvSub?.cancel();
-    _panelAnimController.dispose();
-    _threadScrollCtrl.dispose();
-    _mentionsScrollCtrl.dispose();
+    _chatVersion.removeListener(_onPanelDataChanged);
+    _threadAnimCtrl.dispose();
+    _mentionsAnimCtrl.dispose();
+    _emoteAnimCtrl.dispose();
+    _threadPanelData.dispose();
+    _mentionsPanelData.dispose();
     for (final c in _scrollControllers.values) {
       c.dispose();
     }
@@ -451,10 +475,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _truncateChannelMessages(channel);
 
     if (msg.messageId != null) {
-      _messageKeys.putIfAbsent(
-        '$channel:${msg.messageId}',
-        () => GlobalKey(),
-      );
+      _messageKeys.putIfAbsent('$channel:${msg.messageId}', () => GlobalKey());
     }
 
     if (msg.isHighlighted) {
@@ -493,8 +514,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final messageId = ircMsg.tags['id'];
     final text = ircMsg.trailing!;
 
-    if (messageId != null &&
-        _messageKeys.containsKey('$channel:$messageId')) {
+    if (messageId != null && _messageKeys.containsKey('$channel:$messageId')) {
       return;
     }
 
@@ -515,24 +535,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         }
       }
       _pendingLocals.remove(pendingKey);
-      _channelMessages[channel]?.removeWhere(
-        (m) => m.messageId == pendingKey,
-      );
+      _channelMessages[channel]?.removeWhere((m) => m.messageId == pendingKey);
     }
 
     final tsMs = ircMsg.tags['tmi-sent-ts'];
     final timestamp = tsMs != null
-        ? DateTime.fromMillisecondsSinceEpoch(
-            int.parse(tsMs),
-            isUtc: true,
-          )
+        ? DateTime.fromMillisecondsSinceEpoch(int.parse(tsMs), isUtc: true)
         : DateTime.now().toUtc();
 
     final displayName =
         ircMsg.tags['display-name']?.trim() ?? _currentUserLogin ?? '';
     final userId = ircMsg.tags['user-id'] ?? _currentUserId;
-    final color = ircMsg.tags['color'] != null &&
-            ircMsg.tags['color']!.isNotEmpty
+    final color =
+        ircMsg.tags['color'] != null && ircMsg.tags['color']!.isNotEmpty
         ? ircMsg.tags['color']!
         : pickColor(displayName.toLowerCase());
 
@@ -1021,8 +1036,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void _sendMessage() {
     final text = _messageController.text.trim();
     final channel = _selectedChannel;
-    if (text.isEmpty || channel == null ||
-        _activePanel == OverlayPanel.mentions) return;
+    if (text.isEmpty ||
+        channel == null ||
+        _activePanel == OverlayPanel.mentions)
+      return;
 
     if (!widget.twitchAuth.isConfigured) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1077,8 +1094,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     // Try Helix API if available.
     if (_currentUserId != null && auth.isConfigured) {
-      final broadcasterId = _channelUserIds[channel] ??
-          await TwitchApi.getUserId(auth, channel);
+      final broadcasterId =
+          _channelUserIds[channel] ?? await TwitchApi.getUserId(auth, channel);
       if (broadcasterId != null) {
         try {
           final messageId = await TwitchApi.sendChatMessage(
@@ -1376,7 +1393,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _activePanel = OverlayPanel.thread;
       _openThreadRoot = rootMsg;
     });
-    _panelAnimController.forward(from: 0);
+    _threadPanelData.value = _ThreadPanelData(
+      root: rootMsg,
+      messages: _computeThreadMessages(),
+      channel: channel,
+    );
+    _threadAnimCtrl.forward(from: 0);
   }
 
   void _showMentionsView() {
@@ -1384,23 +1406,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _activePanel = OverlayPanel.mentions;
       _openThreadRoot = null;
     });
-    _panelAnimController.forward(from: 0);
+    _mentionsPanelData.value = _channelMessages[_mentionsChannel] ?? [];
+    _mentionsAnimCtrl.forward(from: 0);
   }
 
   void _showEmoteMenu() {
-    _loadRecentEmotes();
     setState(() => _activePanel = OverlayPanel.emotes);
-    _panelAnimController.forward(from: 0);
-  }
-
-  Future<void> _loadRecentEmotes() async {
-    final recent = await _emoteManager.recentEmotes();
-    if (mounted) {
-      setState(() {
-        _cachedRecentEmotes = recent;
-        _recentEmotesLoaded = true;
-      });
-    }
+    _emoteAnimCtrl.forward(from: 0);
   }
 
   void _onEmoteSelected(GenericEmote emote) {
@@ -1416,15 +1428,27 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   void _closePanel() {
-    _panelAnimController.animateTo(0.0,
-        duration: const Duration(milliseconds: 180), curve: Curves.easeOut).then((_) {
-      if (mounted) {
-        setState(() {
-          _activePanel = OverlayPanel.closed;
-          _openThreadRoot = null;
+    final ctrl = switch (_activePanel) {
+      OverlayPanel.thread => _threadAnimCtrl,
+      OverlayPanel.mentions => _mentionsAnimCtrl,
+      OverlayPanel.emotes => _emoteAnimCtrl,
+      OverlayPanel.closed => null,
+    };
+    if (ctrl == null) return;
+    ctrl
+        .animateTo(
+          0.0,
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+        )
+        .then((_) {
+          if (mounted) {
+            setState(() {
+              _activePanel = OverlayPanel.closed;
+              _openThreadRoot = null;
+            });
+          }
         });
-      }
-    });
   }
 
   List<TwitchMessage> _computeThreadMessages() {
@@ -1460,450 +1484,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     threadMsgs.sort((a, b) => a.timestamp.compareTo(b.timestamp));
     return threadMsgs;
-  }
-
-  Widget _buildThreadPanel(double panelHeight) {
-    final root = _openThreadRoot;
-    if (root == null) return const SizedBox.shrink();
-    final theme = Theme.of(context);
-    final surface = theme.colorScheme.surface;
-    final threadMsgs = _computeThreadMessages();
-    final systemScale = MediaQuery.textScalerOf(context).scale(1.0);
-    final s = _uiScale * systemScale;
-
-    return Material(
-      color: theme.scaffoldBackgroundColor,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _DragHandle(
-            controller: _panelAnimController,
-            panelHeight: panelHeight,
-            onClose: _closePanel,
-            header: Material(
-              elevation: 2,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      tooltip: 'Close reply thread',
-                      onPressed: _closePanel,
-                    ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        'Reply Thread',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: theme.colorScheme.onSurface,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          Divider(height: 1, color: theme.dividerColor),
-          Expanded(
-            child: threadMsgs.isEmpty
-                ? const Center(child: Text('No messages found'))
-                : _PanelDragListener(
-                    controller: _panelAnimController,
-                    panelHeight: panelHeight,
-                    scrollController: _threadScrollCtrl,
-                    onClose: _closePanel,
-                    child: ListView.builder(
-                      controller: _threadScrollCtrl,
-                      physics: const ClampingScrollPhysics(),
-                      reverse: true,
-                      padding: const EdgeInsets.only(bottom: 8),
-                      itemCount: threadMsgs.length,
-                      itemBuilder: (_, i) {
-                        final msg = threadMsgs[threadMsgs.length - 1 - i];
-                        final ts =
-                            '${msg.timestamp.toLocal().hour.toString().padLeft(2, '0')}:${msg.timestamp.toLocal().minute.toString().padLeft(2, '0')}';
-
-                        if (msg.isSystem) {
-                          return ChatMessageTile(
-                            timestamp: ts,
-                            isHistory: msg.isHistory,
-                            children: [TextSpan(text: msg.text)],
-                            timestampFontSize: 13 * s,
-                            bodyFontSize: 13 * s,
-                            bodyColor: msg.bodyColor,
-                            semanticsLabel: msg.text,
-                          );
-                        }
-
-                        return ChatMessageTile(
-                          timestamp: ts,
-                          deleted: msg.deleted,
-                          isHistory: msg.isHistory,
-                          bodyColor: msg.bodyColor,
-                          bodyFontSize: 14 * s,
-                          timestampFontSize: 14 * s,
-                          children: [
-                            if (msg.isAction) ...[
-                              ..._buildBadgeSpans(
-                                msg.channel ?? '',
-                                msg,
-                                badgeScale: s,
-                              ),
-                              TextSpan(
-                                text: '${msg.username} ',
-                                style: TextStyle(
-                                  fontSize: 14 * s,
-                                  fontWeight: FontWeight.w600,
-                                  color: parseColor(
-                                    msg.color,
-                                    background: surface,
-                                  ),
-                                ),
-                              ),
-                              ..._buildMessageSpans(
-                                msg,
-                                msg.channel ?? '',
-                                surface,
-                                colored: true,
-                                textScale: s,
-                              ),
-                            ] else ...[
-                              ..._buildBadgeSpans(
-                                msg.channel ?? '',
-                                msg,
-                                badgeScale: s,
-                              ),
-                              TextSpan(
-                                text: '${msg.username}: ',
-                                style: TextStyle(
-                                  fontSize: 14 * s,
-                                  fontWeight: FontWeight.w600,
-                                  color: parseColor(
-                                    msg.color,
-                                    background: surface,
-                                  ),
-                                ),
-                              ),
-                              ..._buildMessageSpans(
-                                msg,
-                                msg.channel ?? '',
-                                surface,
-                                textScale: s,
-                              ),
-                            ],
-                          ],
-                          onLongPress: () => _showThreadMessageMenu(msg),
-                          semanticsLabel: msg.isHighlighted
-                              ? 'Mention: $ts ${msg.username}: ${msg.text}'
-                              : '$ts ${msg.username}: ${msg.text}',
-                        );
-                      },
-                    ),
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMentionsPanel(double panelHeight) {
-    final msgs = _channelMessages[_mentionsChannel] ?? [];
-    final theme = Theme.of(context);
-    final surface = theme.colorScheme.surface;
-    final systemScale = MediaQuery.textScalerOf(context).scale(1.0);
-    final s = _uiScale * systemScale;
-
-    return Material(
-      color: theme.scaffoldBackgroundColor,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _DragHandle(
-            controller: _panelAnimController,
-            panelHeight: panelHeight,
-            onClose: _closePanel,
-            header: Material(
-              elevation: 2,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back),
-                      tooltip: 'Back',
-                      onPressed: _closePanel,
-                    ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        'Mentions / Whispers',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: theme.colorScheme.onSurface,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          Divider(height: 1, color: theme.dividerColor),
-          Expanded(
-            child: msgs.isEmpty
-                ? const Center(child: Text('No mentions or whispers'))
-                : _PanelDragListener(
-                    controller: _panelAnimController,
-                    panelHeight: panelHeight,
-                    scrollController: _mentionsScrollCtrl,
-                    onClose: _closePanel,
-                    child: ListView.builder(
-                      controller: _mentionsScrollCtrl,
-                      physics: const ClampingScrollPhysics(),
-                      reverse: true,
-                      padding: const EdgeInsets.only(bottom: 8),
-                      itemCount: msgs.length,
-                      itemBuilder: (_, i) {
-                        final msg = msgs[msgs.length - 1 - i];
-                        final ts =
-                            '${msg.timestamp.toLocal().hour.toString().padLeft(2, '0')}:${msg.timestamp.toLocal().minute.toString().padLeft(2, '0')}';
-
-                        if (msg.isSystem) {
-                          return ChatMessageTile(
-                            timestamp: ts,
-                            isHistory: msg.isHistory,
-                            children: [TextSpan(text: msg.text)],
-                            timestampFontSize: 13 * s,
-                            bodyFontSize: 13 * s,
-                            bodyColor: msg.bodyColor,
-                            semanticsLabel: msg.text,
-                          );
-                        }
-
-                        return ChatMessageTile(
-                          timestamp: ts,
-                          deleted: msg.deleted,
-                          isHistory: msg.isHistory,
-                          bodyColor: msg.bodyColor,
-                          bodyFontSize: 14 * s,
-                          timestampFontSize: 14 * s,
-                          children: [
-                            if (msg.isAction) ...[
-                              ..._buildBadgeSpans(
-                                msg.channel ?? '',
-                                msg,
-                                badgeScale: s,
-                              ),
-                              TextSpan(
-                                text: '${msg.username} ',
-                                style: TextStyle(
-                                  fontSize: 14 * s,
-                                  fontWeight: FontWeight.w600,
-                                  color: parseColor(
-                                    msg.color,
-                                    background: surface,
-                                  ),
-                                ),
-                              ),
-                              ..._buildMessageSpans(
-                                msg,
-                                msg.channel ?? '',
-                                surface,
-                                colored: true,
-                                textScale: s,
-                              ),
-                            ] else ...[
-                              ..._buildBadgeSpans(
-                                msg.channel ?? '',
-                                msg,
-                                badgeScale: s,
-                              ),
-                              TextSpan(
-                                text: '${msg.username}: ',
-                                style: TextStyle(
-                                  fontSize: 14 * s,
-                                  fontWeight: FontWeight.w600,
-                                  color: parseColor(
-                                    msg.color,
-                                    background: surface,
-                                  ),
-                                ),
-                              ),
-                              ..._buildMessageSpans(
-                                msg,
-                                msg.channel ?? '',
-                                surface,
-                                textScale: s,
-                              ),
-                            ],
-                          ],
-                          semanticsLabel: msg.isHighlighted
-                              ? 'Mention: $ts ${msg.username}: ${msg.text}'
-                              : '$ts ${msg.username}: ${msg.text}',
-                        );
-                      },
-                    ),
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEmoteMenu(double panelHeight) {
-    final theme = Theme.of(context);
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 4),
-      decoration: BoxDecoration(
-        color: theme.scaffoldBackgroundColor,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.15),
-            blurRadius: 8,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      clipBehavior: Clip.hardEdge,
-      child: Column(
-        children: [
-          _DragHandle(
-            controller: _panelAnimController,
-            panelHeight: panelHeight,
-            onClose: _closePanel,
-            barPadding: const EdgeInsets.symmetric(vertical: 24),
-          ),
-          Expanded(
-            child: TabbedLayout(
-              tabAlignment: Alignment.center,
-              tabs: const ['Recent', 'Subs', 'Channel', 'Global'],
-              selectedIndex: _emoteTabIndex,
-              onSelectedIndexChanged: (i) => setState(() => _emoteTabIndex = i),
-              pageBuilder: (_, i) => _buildEmoteTabPage(i),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEmoteTabPage(int tabIndex) {
-    switch (tabIndex) {
-      case 0:
-        return _buildEmoteRecentGrid();
-      case 1:
-        return _buildEmoteSubsGrid();
-      case 2:
-        return _buildEmoteChannelGrid();
-      case 3:
-        return _buildEmoteGlobalGrid();
-      default:
-        return const SizedBox();
-    }
-  }
-
-  Widget _buildEmoteRecentGrid() {
-    if (!_recentEmotesLoaded) {
-      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
-    }
-    if (_cachedRecentEmotes.isEmpty) {
-      return const Center(child: Text('No recently used emotes'));
-    }
-    return _buildEmoteGrid(_cachedRecentEmotes);
-  }
-
-  Widget _buildEmoteSubsGrid() {
-    final byChannel = _emoteManager.subscriberEmotesByChannel();
-    if (byChannel.isEmpty) {
-      return const Center(child: Text('No subscriber emotes available'));
-    }
-    return CustomScrollView(
-      slivers: [
-        for (final entry in byChannel.entries) ...[
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.only(left: 8, top: 8, right: 8),
-              child: Text(
-                entry.key,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13,
-                ),
-              ),
-            ),
-          ),
-          SliverGrid(
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 5,
-              mainAxisSpacing: 10,
-              crossAxisSpacing: 10,
-              childAspectRatio: 1,
-            ),
-            delegate: SliverChildBuilderDelegate(
-              (_, i) => _buildEmoteGridItem(entry.value[i]),
-              childCount: entry.value.length,
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildEmoteChannelGrid() {
-    final channel = _selectedChannel ?? '';
-    final emotes = _emoteManager.channelNonTwitchEmotes(channel);
-    if (emotes.isEmpty) {
-      return const Center(child: Text('No channel emotes'));
-    }
-    return _buildEmoteGrid(emotes);
-  }
-
-  Widget _buildEmoteGlobalGrid() {
-    final emotes = _emoteManager.globalEmotes();
-    if (emotes.isEmpty) {
-      return const Center(child: Text('No global emotes'));
-    }
-    return _buildEmoteGrid(emotes);
-  }
-
-  Widget _buildEmoteGrid(List<GenericEmote> emotes) {
-    const maxCells = 15;
-    final count = emotes.length > maxCells ? maxCells : emotes.length;
-    return GridView.builder(
-      padding: const EdgeInsets.all(4),
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 5,
-        mainAxisSpacing: 10,
-        crossAxisSpacing: 10,
-        childAspectRatio: 1,
-      ),
-      itemCount: maxCells,
-      itemBuilder: (_, i) =>
-          i < count ? _buildEmoteGridItem(emotes[i]) : const SizedBox(),
-    );
-  }
-
-  Widget _buildEmoteGridItem(GenericEmote emote) {
-    return Material(
-      type: MaterialType.transparency,
-      clipBehavior: Clip.hardEdge,
-      child: InkWell(
-        onTap: () => _onEmoteSelected(emote),
-        child: CachedNetworkImage(
-          imageUrl: emote.url,
-          fit: BoxFit.contain,
-          placeholder: (_, _) => const SizedBox(),
-          errorWidget: (_, _, _) => const Icon(Icons.broken_image, size: 20),
-        ),
-      ),
-    );
   }
 
   void _showUserProfile(String username, String? userId) {
@@ -1943,9 +1523,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _activePanel = OverlayPanel.closed;
       }
       _openThreadRoot = null;
-      _emoteTabIndex = 0;
     });
-    _panelAnimController.stop();
+    _threadAnimCtrl.stop();
+    _mentionsAnimCtrl.stop();
+    _emoteAnimCtrl.stop();
   }
 
   List<TwitchMessage> _messages(String channel) {
@@ -1986,6 +1567,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
 
     return PopScope(
       canPop: _activePanel == OverlayPanel.closed,
@@ -1993,194 +1575,231 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         if (!didPop) _closePanel();
       },
       child: Scaffold(
-      body: Column(
-        children: [
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final fullHeight = constraints.maxHeight;
-                final keyboardH =
-                    MediaQuery.of(context).viewInsets.bottom;
-                final statusBarH = MediaQuery.of(context).padding.top;
-                final emoteH = keyboardH > 0
-                    ? fullHeight
-                    : (fullHeight * 0.55).clamp(150.0, fullHeight);
-                final emoteTop = keyboardH > 0 ? 0.0 : fullHeight - emoteH;
-                return Stack(
-                  clipBehavior: Clip.hardEdge,
-                  children: [
-                    Column(
-                      children: [
-                        SafeArea(
-                          bottom: false,
-                          child: Padding(
-                            padding:
-                                const EdgeInsets.symmetric(horizontal: 4),
-                            child: Row(
-                              children: [
-                                const Spacer(),
-                                IconButton(
-                                  icon: const Icon(Icons.add),
-                                  tooltip: 'Join channel',
-                                  onPressed: _addChannelDialog,
-                                ),
-                                IconButton(
-                                  icon: Icon(
-                                    Icons.notifications_active,
-                                    color: _unreadMentions > 0
-                                        ? theme.colorScheme.error
-                                        : null,
+        resizeToAvoidBottomInset: false,
+        body: Column(
+          children: [
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final fullHeight = constraints.maxHeight;
+                  final keyboardH = MediaQuery.of(context).viewInsets.bottom;
+                  final statusBarH = MediaQuery.of(context).padding.top;
+                  final emoteH = keyboardH > 0
+                      ? fullHeight
+                      : (fullHeight * 0.55).clamp(150.0, fullHeight);
+                  final emoteTop = keyboardH > 0 ? 0.0 : fullHeight - emoteH;
+                  return Stack(
+                    clipBehavior: Clip.hardEdge,
+                    children: [
+                      Column(
+                        children: [
+                          SafeArea(
+                            bottom: false,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                              ),
+                              child: Row(
+                                children: [
+                                  const Spacer(),
+                                  IconButton(
+                                    icon: const Icon(Icons.add),
+                                    tooltip: 'Join channel',
+                                    onPressed: _addChannelDialog,
                                   ),
-                                  tooltip: 'Mentions',
-                                  onPressed: () {
-                                    _unreadMentions = 0;
-                                    if (mounted) setState(() {});
-                                    if (_activePanel ==
-                                        OverlayPanel.mentions) {
-                                      _closePanel();
-                                    } else {
-                                      _showMentionsView();
-                                    }
-                                  },
-                                ),
-                                SettingsButton(
-                                  twitchAuth: widget.twitchAuth,
-                                  onThemeChanged: widget.onThemeChanged,
-                                  channelNotifier: _channelNotifier,
-                                  onLeaveChannel: _removeChannel,
-                                  onAddChannel: _addChannel,
-                                  onSettingsClosed: () {
-                                    if (mounted) setState(() {});
-                                    _connect();
-                                  },
-                                  eventSubMessageStream:
-                                      _eventSub.onMessage,
-                                ),
-                              ],
+                                  IconButton(
+                                    icon: Icon(
+                                      Icons.notifications_active,
+                                      color: _unreadMentions > 0
+                                          ? theme.colorScheme.error
+                                          : null,
+                                    ),
+                                    tooltip: 'Mentions',
+                                    onPressed: () {
+                                      _unreadMentions = 0;
+                                      if (mounted) setState(() {});
+                                      if (_activePanel ==
+                                          OverlayPanel.mentions) {
+                                        _closePanel();
+                                      } else {
+                                        _showMentionsView();
+                                      }
+                                    },
+                                  ),
+                                  SettingsButton(
+                                    twitchAuth: widget.twitchAuth,
+                                    onThemeChanged: widget.onThemeChanged,
+                                    channelNotifier: _channelNotifier,
+                                    onLeaveChannel: _removeChannel,
+                                    onAddChannel: _addChannel,
+                                    onSettingsClosed: () {
+                                      if (mounted) setState(() {});
+                                      _connect();
+                                    },
+                                    eventSubMessageStream: _eventSub.onMessage,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: _channels.isNotEmpty
+                                ? ListenableBuilder(
+                                    listenable: _chatVersion,
+                                    builder: (context, _) => TabbedLayout(
+                                      tabs: _channels,
+                                      selectedIndex: _channels.indexOf(
+                                        _selectedChannel ?? '',
+                                      ),
+                                      onSelectedIndexChanged: _onChannelChanged,
+                                      pageBuilder: (_, i) =>
+                                          _buildChat(_channels[i]),
+                                      tabBuilder: (_, i) {
+                                        final channel = _channels[i];
+                                        final selected =
+                                            channel == _selectedChannel;
+                                        return Text(
+                                          channel,
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight:
+                                                selected ||
+                                                    _channelsWithUnread
+                                                        .contains(channel)
+                                                ? FontWeight.w600
+                                                : FontWeight.normal,
+                                            color: selected
+                                                ? theme.colorScheme.primary
+                                                : _channelsWithUnread.contains(
+                                                    channel,
+                                                  )
+                                                ? Colors.white
+                                                : null,
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  )
+                                : _buildEmpty(),
+                          ),
+                        ],
+                      ),
+                      if (_activePanel == OverlayPanel.thread)
+                        SlidePanel(
+                          animation: _threadAnimCtrl,
+                          stackHeight: fullHeight,
+                          top: statusBarH,
+                          child: RepaintBoundary(
+                            child: _ThreadPanelWidget(
+                              key: const ValueKey('thread_panel'),
+                              controller: _threadAnimCtrl,
+                              panelHeight: fullHeight - statusBarH,
+                              data: _threadPanelData,
+                              uiScale: _uiScale,
+                              onClose: _closePanel,
+                              onLongPress: _showThreadMessageMenu,
+                              buildBadgeSpans: _buildBadgeSpans,
+                              buildMessageSpans: _buildMessageSpans,
                             ),
                           ),
                         ),
-                        Expanded(
-                          child: _channels.isNotEmpty
-                              ? ListenableBuilder(
-                                  listenable: _chatVersion,
-                                  builder: (context, _) => TabbedLayout(
-                                    tabs: _channels,
-                                    selectedIndex: _channels.indexOf(
-                                      _selectedChannel ?? '',
-                                    ),
-                                    onSelectedIndexChanged:
-                                        _onChannelChanged,
-                                    pageBuilder: (_, i) =>
-                                        _buildChat(_channels[i]),
-                                    tabBuilder: (_, i) {
-                                      final channel = _channels[i];
-                                      final selected =
-                                          channel == _selectedChannel;
-                                      return Text(
-                                        channel,
-                                        style: TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: selected ||
-                                                  _channelsWithUnread
-                                                      .contains(channel)
-                                              ? FontWeight.w600
-                                              : FontWeight.normal,
-                                          color: selected
-                                              ? theme
-                                                  .colorScheme.primary
-                                              : _channelsWithUnread
-                                                      .contains(channel)
-                                                  ? Colors.white
-                                                  : null,
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                )
-                              : _buildEmpty(),
+                      if (_activePanel == OverlayPanel.mentions)
+                        SlidePanel(
+                          animation: _mentionsAnimCtrl,
+                          stackHeight: fullHeight,
+                          top: statusBarH,
+                          child: RepaintBoundary(
+                            child: _MentionsPanelWidget(
+                              key: const ValueKey('mentions_panel'),
+                              controller: _mentionsAnimCtrl,
+                              panelHeight: fullHeight - statusBarH,
+                              messages: _mentionsPanelData,
+                              uiScale: _uiScale,
+                              onClose: _closePanel,
+                              buildBadgeSpans: _buildBadgeSpans,
+                              buildMessageSpans: _buildMessageSpans,
+                            ),
+                          ),
                         ),
-                      ],
+                      if (_activePanel == OverlayPanel.emotes)
+                        SlidePanel(
+                          animation: _emoteAnimCtrl,
+                          stackHeight: fullHeight,
+                          top: emoteTop,
+                          child: RepaintBoundary(
+                            child: _EmoteMenuPanelWidget(
+                              key: const ValueKey('emote_panel'),
+                              controller: _emoteAnimCtrl,
+                              panelHeight: emoteH,
+                              uiScale: _uiScale,
+                              selectedChannel: _selectedChannel,
+                              onEmoteSelected: _onEmoteSelected,
+                              onClose: _closePanel,
+                              emoteManager: _emoteManager,
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
+            ),
+            Padding(
+              padding: EdgeInsets.only(bottom: bottomInset),
+              child: ColoredBox(
+                color: theme.scaffoldBackgroundColor,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _MessageInput(
+                      controller: _messageController,
+                      focusNode: _focusNode,
+                      onSend: _sendMessage,
+                      onSendLongPress: _onSendLongPress,
+                      onEmoteToggle: () {
+                        if (_activePanel == OverlayPanel.emotes) {
+                          _closePanel();
+                        } else {
+                          _showEmoteMenu();
+                        }
+                      },
+                      replyToMsg: _replyToMsg,
+                      onCancelReply: () => setState(() => _replyToMsg = null),
+                      enabled:
+                          _activePanel != OverlayPanel.mentions &&
+                          widget.twitchAuth.isConfigured,
+                      hintText: !widget.twitchAuth.isConfigured
+                          ? 'Connect an account to chat'
+                          : _activePanel == OverlayPanel.thread
+                          ? 'Reply to thread...'
+                          : _activePanel == OverlayPanel.mentions
+                          ? 'Type a message...'
+                          : null,
                     ),
-                    if (_activePanel == OverlayPanel.thread)
-                      SlidePanel(
-                        animation: _panelAnimController,
-                        stackHeight: fullHeight,
-                        top: statusBarH,
-                        child: _buildThreadPanel(fullHeight - statusBarH),
-                      ),
-                    if (_activePanel == OverlayPanel.mentions)
-                      SlidePanel(
-                        animation: _panelAnimController,
-                        stackHeight: fullHeight,
-                        top: statusBarH,
-                        child: _buildMentionsPanel(fullHeight - statusBarH),
-                      ),
-                    if (_activePanel == OverlayPanel.emotes)
-                      SlidePanel(
-                        animation: _panelAnimController,
-                        stackHeight: fullHeight,
-                        top: emoteTop,
-                        child: _buildEmoteMenu(emoteH),
+                    if (_chatStatus[_selectedChannel] != null &&
+                        _chatStatus[_selectedChannel]!.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(
+                          left: 12,
+                          right: 12,
+                          bottom: 4,
+                        ),
+                        child: Text(
+                          _chatStatus[_selectedChannel]!,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
                       ),
                   ],
-                );
-              },
-            ),
-          ),
-          ColoredBox(
-            color: theme.scaffoldBackgroundColor,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _MessageInput(
-                  controller: _messageController,
-                  focusNode: _focusNode,
-                  onSend: _sendMessage,
-                  onSendLongPress: _onSendLongPress,
-                  onEmoteToggle: () {
-                    if (_activePanel == OverlayPanel.emotes) {
-                      _closePanel();
-                    } else {
-                      _showEmoteMenu();
-                    }
-                  },
-                  replyToMsg: _replyToMsg,
-                  onCancelReply: () =>
-                      setState(() => _replyToMsg = null),
-                  enabled: _activePanel != OverlayPanel.mentions &&
-                      widget.twitchAuth.isConfigured,
-                  hintText: !widget.twitchAuth.isConfigured
-                      ? 'Connect an account to chat'
-                      : _activePanel == OverlayPanel.thread
-                      ? 'Reply to thread...'
-                      : _activePanel == OverlayPanel.mentions
-                      ? 'Type a message...'
-                      : null,
                 ),
-                if (_chatStatus[_selectedChannel] != null &&
-                    _chatStatus[_selectedChannel]!.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(
-                      left: 12,
-                      right: 12,
-                      bottom: 4,
-                    ),
-                    child: Text(
-                      _chatStatus[_selectedChannel]!,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-              ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
-    ),
     );
   }
 
@@ -2231,7 +1850,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return msg.cachedSpans!;
   }
 
-  List<InlineSpan> _computeMessageSpans(TwitchMessage msg, String channel, {double scale = 1.0}) {
+  List<InlineSpan> _computeMessageSpans(
+    TwitchMessage msg,
+    String channel, {
+    double scale = 1.0,
+  }) {
     final channelEmotes = _emoteManager.byCode(channel);
     return EmoteText.build(
       text: msg.text,
@@ -2242,7 +1865,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  List<WidgetSpan> _buildBadgeSpans(String channel, TwitchMessage msg, {double badgeScale = 1.0}) {
+  List<WidgetSpan> _buildBadgeSpans(
+    String channel,
+    TwitchMessage msg, {
+    double badgeScale = 1.0,
+  }) {
     final badgeSize = 18.0 * badgeScale;
     final spans = <WidgetSpan>[];
 
@@ -2266,10 +1893,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     height: badgeSize,
                     fit: BoxFit.cover,
                     fadeInDuration: Duration.zero,
-                    placeholder: (_, _) => SizedBox(
-                      width: badgeSize,
-                      height: badgeSize,
-                    ),
+                    placeholder: (_, _) =>
+                        SizedBox(width: badgeSize, height: badgeSize),
                     errorWidget: (_, url, error) {
                       debugPrint(
                         'Shared chat badge image failed: $url — $error',
@@ -2308,10 +1933,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   height: badgeSize,
                   fit: BoxFit.contain,
                   fadeInDuration: Duration.zero,
-                  placeholder: (_, _) => SizedBox(
-                    width: badgeSize,
-                    height: badgeSize,
-                  ),
+                  placeholder: (_, _) =>
+                      SizedBox(width: badgeSize, height: badgeSize),
                   errorWidget: (_, url, error) {
                     debugPrint('Badge image load failed: $url — $error');
                     return SizedBox(width: badgeSize, height: badgeSize);
@@ -2390,7 +2013,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     ..onTap = () => _showUserProfile(msg.username, msg.userId),
                 ),
                 if (msg.isAction)
-                  ..._buildMessageSpans(msg, channel, surface, colored: true, textScale: s)
+                  ..._buildMessageSpans(
+                    msg,
+                    channel,
+                    surface,
+                    colored: true,
+                    textScale: s,
+                  )
                 else
                   ..._buildMessageSpans(msg, channel, surface, textScale: s),
               ],
@@ -2942,13 +2571,14 @@ class _DragHandle extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       onVerticalDragUpdate: (details) {
         final newValue =
-            (controller.value - details.primaryDelta! / panelHeight)
-                .clamp(0.0, 1.0);
+            (controller.value - details.primaryDelta! / panelHeight).clamp(
+              0.0,
+              1.0,
+            );
         controller.value = newValue;
       },
       onVerticalDragEnd: (details) {
-        if (controller.value < 0.5 ||
-            (details.primaryVelocity ?? 0) < -200) {
+        if (controller.value < 0.5 || (details.primaryVelocity ?? 0) < -200) {
           onClose();
         } else {
           controller.animateTo(
@@ -3018,8 +2648,11 @@ class _PanelDragListenerState extends State<_PanelDragListener> {
         widget.scrollController.hasClients &&
         widget.scrollController.position.pixels >=
             widget.scrollController.position.maxScrollExtent - 0.5) {
-      widget.controller.value = (widget.controller.value - event.delta.dy / widget.panelHeight)
-          .clamp(0.0, 1.0);
+      widget.controller.value =
+          (widget.controller.value - event.delta.dy / widget.panelHeight).clamp(
+            0.0,
+            1.0,
+          );
     }
   }
 
@@ -3186,6 +2819,610 @@ class _MessageInput extends StatelessWidget {
             },
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ThreadPanelData {
+  final TwitchMessage root;
+  final List<TwitchMessage> messages;
+  final String channel;
+  _ThreadPanelData({
+    required this.root,
+    required this.messages,
+    required this.channel,
+  });
+}
+
+class _ThreadPanelWidget extends StatefulWidget {
+  final AnimationController controller;
+  final double panelHeight;
+  final ValueListenable<_ThreadPanelData?> data;
+  final double uiScale;
+  final VoidCallback onClose;
+  final void Function(TwitchMessage) onLongPress;
+  final List<WidgetSpan> Function(String, TwitchMessage, {double badgeScale})
+  buildBadgeSpans;
+  final List<InlineSpan> Function(
+    TwitchMessage,
+    String,
+    Color, {
+    bool colored,
+    double textScale,
+  })
+  buildMessageSpans;
+
+  const _ThreadPanelWidget({
+    required this.controller,
+    required this.panelHeight,
+    required this.data,
+    required this.uiScale,
+    required this.onClose,
+    required this.onLongPress,
+    required this.buildBadgeSpans,
+    required this.buildMessageSpans,
+    super.key,
+  });
+
+  @override
+  State<_ThreadPanelWidget> createState() => _ThreadPanelWidgetState();
+}
+
+class _ThreadPanelWidgetState extends State<_ThreadPanelWidget> {
+  late final ScrollController _scrollCtrl = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<_ThreadPanelData?>(
+      valueListenable: widget.data,
+      builder: (context, data, _) {
+        final theme = Theme.of(context);
+        final surface = theme.colorScheme.surface;
+        final systemScale = MediaQuery.textScalerOf(context).scale(1.0);
+        final s = widget.uiScale * systemScale;
+
+        if (data == null) return const SizedBox.shrink();
+
+        final threadMsgs = data.messages;
+
+        return Material(
+          color: theme.scaffoldBackgroundColor,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _DragHandle(
+                controller: widget.controller,
+                panelHeight: widget.panelHeight,
+                onClose: widget.onClose,
+                header: Material(
+                  elevation: 2,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.close),
+                          tooltip: 'Close reply thread',
+                          onPressed: widget.onClose,
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            'Reply Thread',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: theme.colorScheme.onSurface,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Divider(height: 1, color: theme.dividerColor),
+              Expanded(
+                child: threadMsgs.isEmpty
+                    ? const Center(child: Text('No messages found'))
+                    : _PanelDragListener(
+                        controller: widget.controller,
+                        panelHeight: widget.panelHeight,
+                        scrollController: _scrollCtrl,
+                        onClose: widget.onClose,
+                        child: ListView.builder(
+                          controller: _scrollCtrl,
+                          physics: const ClampingScrollPhysics(),
+                          reverse: true,
+                          padding: const EdgeInsets.only(bottom: 8),
+                          itemCount: threadMsgs.length,
+                          itemBuilder: (_, i) {
+                            final msg = threadMsgs[threadMsgs.length - 1 - i];
+                            final ts =
+                                '${msg.timestamp.toLocal().hour.toString().padLeft(2, '0')}:${msg.timestamp.toLocal().minute.toString().padLeft(2, '0')}';
+
+                            if (msg.isSystem) {
+                              return ChatMessageTile(
+                                timestamp: ts,
+                                isHistory: msg.isHistory,
+                                children: [TextSpan(text: msg.text)],
+                                timestampFontSize: 13 * s,
+                                bodyFontSize: 13 * s,
+                                bodyColor: msg.bodyColor,
+                                semanticsLabel: msg.text,
+                              );
+                            }
+
+                            return ChatMessageTile(
+                              timestamp: ts,
+                              deleted: msg.deleted,
+                              isHistory: msg.isHistory,
+                              bodyColor: msg.bodyColor,
+                              bodyFontSize: 14 * s,
+                              timestampFontSize: 14 * s,
+                              children: [
+                                if (msg.isAction) ...[
+                                  ...widget.buildBadgeSpans(
+                                    data.channel,
+                                    msg,
+                                    badgeScale: s,
+                                  ),
+                                  TextSpan(
+                                    text: '${msg.username} ',
+                                    style: TextStyle(
+                                      fontSize: 14 * s,
+                                      fontWeight: FontWeight.w600,
+                                      color: parseColor(
+                                        msg.color,
+                                        background: surface,
+                                      ),
+                                    ),
+                                  ),
+                                  ...widget.buildMessageSpans(
+                                    msg,
+                                    data.channel,
+                                    surface,
+                                    colored: true,
+                                    textScale: s,
+                                  ),
+                                ] else ...[
+                                  ...widget.buildBadgeSpans(
+                                    data.channel,
+                                    msg,
+                                    badgeScale: s,
+                                  ),
+                                  TextSpan(
+                                    text: '${msg.username}: ',
+                                    style: TextStyle(
+                                      fontSize: 14 * s,
+                                      fontWeight: FontWeight.w600,
+                                      color: parseColor(
+                                        msg.color,
+                                        background: surface,
+                                      ),
+                                    ),
+                                  ),
+                                  ...widget.buildMessageSpans(
+                                    msg,
+                                    data.channel,
+                                    surface,
+                                    textScale: s,
+                                  ),
+                                ],
+                              ],
+                              onLongPress: () => widget.onLongPress(msg),
+                              semanticsLabel: msg.isHighlighted
+                                  ? 'Mention: $ts ${msg.username}: ${msg.text}'
+                                  : '$ts ${msg.username}: ${msg.text}',
+                            );
+                          },
+                        ),
+                      ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _MentionsPanelWidget extends StatefulWidget {
+  final AnimationController controller;
+  final double panelHeight;
+  final ValueListenable<List<TwitchMessage>?> messages;
+  final double uiScale;
+  final VoidCallback onClose;
+  final List<WidgetSpan> Function(String, TwitchMessage, {double badgeScale})
+  buildBadgeSpans;
+  final List<InlineSpan> Function(
+    TwitchMessage,
+    String,
+    Color, {
+    bool colored,
+    double textScale,
+  })
+  buildMessageSpans;
+
+  const _MentionsPanelWidget({
+    required this.controller,
+    required this.panelHeight,
+    required this.messages,
+    required this.uiScale,
+    required this.onClose,
+    required this.buildBadgeSpans,
+    required this.buildMessageSpans,
+    super.key,
+  });
+
+  @override
+  State<_MentionsPanelWidget> createState() => _MentionsPanelWidgetState();
+}
+
+class _MentionsPanelWidgetState extends State<_MentionsPanelWidget> {
+  late final ScrollController _scrollCtrl = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<List<TwitchMessage>?>(
+      valueListenable: widget.messages,
+      builder: (context, msgs, _) {
+        final theme = Theme.of(context);
+        final surface = theme.colorScheme.surface;
+        final systemScale = MediaQuery.textScalerOf(context).scale(1.0);
+        final s = widget.uiScale * systemScale;
+
+        final messageList = msgs ?? [];
+
+        return Material(
+          color: theme.scaffoldBackgroundColor,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _DragHandle(
+                controller: widget.controller,
+                panelHeight: widget.panelHeight,
+                onClose: widget.onClose,
+                header: Material(
+                  elevation: 2,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.arrow_back),
+                          tooltip: 'Back',
+                          onPressed: widget.onClose,
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            'Mentions / Whispers',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: theme.colorScheme.onSurface,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Divider(height: 1, color: theme.dividerColor),
+              Expanded(
+                child: messageList.isEmpty
+                    ? const Center(child: Text('No mentions or whispers'))
+                    : _PanelDragListener(
+                        controller: widget.controller,
+                        panelHeight: widget.panelHeight,
+                        scrollController: _scrollCtrl,
+                        onClose: widget.onClose,
+                        child: ListView.builder(
+                          controller: _scrollCtrl,
+                          physics: const ClampingScrollPhysics(),
+                          reverse: true,
+                          padding: const EdgeInsets.only(bottom: 8),
+                          itemCount: messageList.length,
+                          itemBuilder: (_, i) {
+                            final msg = messageList[messageList.length - 1 - i];
+                            final ts =
+                                '${msg.timestamp.toLocal().hour.toString().padLeft(2, '0')}:${msg.timestamp.toLocal().minute.toString().padLeft(2, '0')}';
+
+                            if (msg.isSystem) {
+                              return ChatMessageTile(
+                                timestamp: ts,
+                                isHistory: msg.isHistory,
+                                children: [TextSpan(text: msg.text)],
+                                timestampFontSize: 13 * s,
+                                bodyFontSize: 13 * s,
+                                bodyColor: msg.bodyColor,
+                                semanticsLabel: msg.text,
+                              );
+                            }
+
+                            final channel = msg.channel ?? '';
+
+                            return ChatMessageTile(
+                              timestamp: ts,
+                              deleted: msg.deleted,
+                              isHistory: msg.isHistory,
+                              bodyColor: msg.bodyColor,
+                              bodyFontSize: 14 * s,
+                              timestampFontSize: 14 * s,
+                              children: [
+                                if (msg.isAction) ...[
+                                  ...widget.buildBadgeSpans(
+                                    channel,
+                                    msg,
+                                    badgeScale: s,
+                                  ),
+                                  TextSpan(
+                                    text: '${msg.username} ',
+                                    style: TextStyle(
+                                      fontSize: 14 * s,
+                                      fontWeight: FontWeight.w600,
+                                      color: parseColor(
+                                        msg.color,
+                                        background: surface,
+                                      ),
+                                    ),
+                                  ),
+                                  ...widget.buildMessageSpans(
+                                    msg,
+                                    channel,
+                                    surface,
+                                    colored: true,
+                                    textScale: s,
+                                  ),
+                                ] else ...[
+                                  ...widget.buildBadgeSpans(
+                                    channel,
+                                    msg,
+                                    badgeScale: s,
+                                  ),
+                                  TextSpan(
+                                    text: '${msg.username}: ',
+                                    style: TextStyle(
+                                      fontSize: 14 * s,
+                                      fontWeight: FontWeight.w600,
+                                      color: parseColor(
+                                        msg.color,
+                                        background: surface,
+                                      ),
+                                    ),
+                                  ),
+                                  ...widget.buildMessageSpans(
+                                    msg,
+                                    channel,
+                                    surface,
+                                    textScale: s,
+                                  ),
+                                ],
+                              ],
+                              semanticsLabel: msg.isHighlighted
+                                  ? 'Mention: $ts ${msg.username}: ${msg.text}'
+                                  : '$ts ${msg.username}: ${msg.text}',
+                            );
+                          },
+                        ),
+                      ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _EmoteMenuPanelWidget extends StatefulWidget {
+  final AnimationController controller;
+  final double panelHeight;
+  final double uiScale;
+  final String? selectedChannel;
+  final void Function(GenericEmote) onEmoteSelected;
+  final VoidCallback onClose;
+  final EmoteManager emoteManager;
+
+  const _EmoteMenuPanelWidget({
+    required this.controller,
+    required this.panelHeight,
+    required this.uiScale,
+    required this.selectedChannel,
+    required this.onEmoteSelected,
+    required this.onClose,
+    required this.emoteManager,
+    super.key,
+  });
+
+  @override
+  State<_EmoteMenuPanelWidget> createState() => _EmoteMenuPanelWidgetState();
+}
+
+class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
+  int _emoteTabIndex = 0;
+  List<GenericEmote> _cachedRecentEmotes = [];
+  bool _recentEmotesLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRecentEmotes();
+  }
+
+  Future<void> _loadRecentEmotes() async {
+    final recent = await widget.emoteManager.recentEmotes();
+    if (mounted) {
+      setState(() {
+        _cachedRecentEmotes = recent;
+        _recentEmotesLoaded = true;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: BoxDecoration(
+        color: theme.scaffoldBackgroundColor,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.15),
+            blurRadius: 8,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.hardEdge,
+      child: Column(
+        children: [
+          _DragHandle(
+            controller: widget.controller,
+            panelHeight: widget.panelHeight,
+            onClose: widget.onClose,
+            barPadding: const EdgeInsets.symmetric(vertical: 24),
+          ),
+          Expanded(
+            child: TabbedLayout(
+              tabAlignment: Alignment.center,
+              tabs: const ['Recent', 'Subs', 'Channel', 'Global'],
+              selectedIndex: _emoteTabIndex,
+              onSelectedIndexChanged: (i) => setState(() => _emoteTabIndex = i),
+              pageBuilder: (_, i) => _buildEmoteTabPage(i),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmoteTabPage(int tabIndex) {
+    switch (tabIndex) {
+      case 0:
+        return _buildEmoteRecentGrid();
+      case 1:
+        return _buildEmoteSubsGrid();
+      case 2:
+        return _buildEmoteChannelGrid();
+      case 3:
+        return _buildEmoteGlobalGrid();
+      default:
+        return const SizedBox();
+    }
+  }
+
+  Widget _buildEmoteRecentGrid() {
+    if (!_recentEmotesLoaded) {
+      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+    }
+    if (_cachedRecentEmotes.isEmpty) {
+      return const Center(child: Text('No recently used emotes'));
+    }
+    return _buildEmoteGrid(_cachedRecentEmotes);
+  }
+
+  Widget _buildEmoteSubsGrid() {
+    final byChannel = widget.emoteManager.subscriberEmotesByChannel();
+    if (byChannel.isEmpty) {
+      return const Center(child: Text('No subscriber emotes available'));
+    }
+    return CustomScrollView(
+      slivers: [
+        for (final entry in byChannel.entries) ...[
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.only(left: 8, top: 8, right: 8),
+              child: Text(
+                entry.key,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+          ),
+          SliverGrid(
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 5,
+              mainAxisSpacing: 10,
+              crossAxisSpacing: 10,
+              childAspectRatio: 1,
+            ),
+            delegate: SliverChildBuilderDelegate(
+              (_, i) => _buildEmoteGridItem(entry.value[i]),
+              childCount: entry.value.length,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildEmoteChannelGrid() {
+    final channel = widget.selectedChannel ?? '';
+    final emotes = widget.emoteManager.channelNonTwitchEmotes(channel);
+    if (emotes.isEmpty) {
+      return const Center(child: Text('No channel emotes'));
+    }
+    return _buildEmoteGrid(emotes);
+  }
+
+  Widget _buildEmoteGlobalGrid() {
+    final emotes = widget.emoteManager.globalEmotes();
+    if (emotes.isEmpty) {
+      return const Center(child: Text('No global emotes'));
+    }
+    return _buildEmoteGrid(emotes);
+  }
+
+  Widget _buildEmoteGrid(List<GenericEmote> emotes) {
+    const maxCells = 15;
+    final count = emotes.length > maxCells ? maxCells : emotes.length;
+    return GridView.builder(
+      padding: const EdgeInsets.all(4),
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 5,
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        childAspectRatio: 1,
+      ),
+      itemCount: maxCells,
+      itemBuilder: (_, i) =>
+          i < count ? _buildEmoteGridItem(emotes[i]) : const SizedBox(),
+    );
+  }
+
+  Widget _buildEmoteGridItem(GenericEmote emote) {
+    return Material(
+      type: MaterialType.transparency,
+      clipBehavior: Clip.hardEdge,
+      child: InkWell(
+        onTap: () => widget.onEmoteSelected(emote),
+        child: CachedNetworkImage(
+          imageUrl: emote.url,
+          fit: BoxFit.contain,
+          placeholder: (_, _) => const SizedBox(),
+          errorWidget: (_, _, _) => const Icon(Icons.broken_image, size: 20),
+        ),
       ),
     );
   }

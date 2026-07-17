@@ -136,9 +136,8 @@ class RecentMessagesService {
 
     // Parse source-room-id for shared chat
     final sourceRoomId = tags['source-room-id'];
-    final sourceBroadcasterId = (sourceRoomId != null && sourceRoomId.isNotEmpty)
-        ? sourceRoomId
-        : null;
+    final sourceBroadcasterId =
+        (sourceRoomId != null && sourceRoomId.isNotEmpty) ? sourceRoomId : null;
 
     // Parse badges from IRC tags
     List<MessageBadge>? badges;

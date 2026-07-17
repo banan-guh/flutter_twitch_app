@@ -73,7 +73,9 @@ class IrcService {
           _scheduleReconnect();
         },
         onDone: () {
-          debugPrint('IRC stream closed (code: ${_channel?.closeCode}, reason: ${_channel?.closeReason})');
+          debugPrint(
+            'IRC stream closed (code: ${_channel?.closeCode}, reason: ${_channel?.closeReason})',
+          );
           _scheduleReconnect();
         },
       );
@@ -94,7 +96,6 @@ class IrcService {
         }
         _send('PING :keepalive');
       });
-
     } catch (e) {
       debugPrint('IRC connect error: $e');
       _scheduleReconnect();
@@ -123,9 +124,7 @@ class IrcService {
         seconds: min(pow(2, _reconnectAttempt - 2).toInt(), 30),
       );
       final jitter = 0.75 + Random().nextDouble() * 0.5;
-      delay = Duration(
-        milliseconds: (base.inMilliseconds * jitter).toInt(),
-      );
+      delay = Duration(milliseconds: (base.inMilliseconds * jitter).toInt());
     }
     Future.delayed(delay, () {
       _reconnecting = false;

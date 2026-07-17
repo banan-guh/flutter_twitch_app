@@ -49,18 +49,14 @@ class EmoteManager extends ChangeNotifier {
     return ChannelEmotes(byCode: merged, suggestions: suggestions);
   }
 
-  List<String> get joinedChannels =>
-      _channelCaches.keys.toList()..sort();
+  List<String> get joinedChannels => _channelCaches.keys.toList()..sort();
 
-  List<GenericEmote> globalEmotes() =>
-      _globalCache?.suggestions ?? [];
+  List<GenericEmote> globalEmotes() => _globalCache?.suggestions ?? [];
 
   List<GenericEmote> channelNonTwitchEmotes(String channel) {
     final cached = _channelCaches[channel];
     if (cached == null) return [];
-    return cached.suggestions
-        .where((e) => e.type != EmoteType.twitch)
-        .toList()
+    return cached.suggestions.where((e) => e.type != EmoteType.twitch).toList()
       ..sort((a, b) => a.code.compareTo(b.code));
   }
 
@@ -231,7 +227,10 @@ class EmoteManager extends ChangeNotifier {
     return all;
   }
 
-  Future<List<GenericEmote>> _fetchAllChannel(String? broadcasterId, {String? channelName}) async {
+  Future<List<GenericEmote>> _fetchAllChannel(
+    String? broadcasterId, {
+    String? channelName,
+  }) async {
     if (broadcasterId == null) return [];
     final all = <GenericEmote>[];
     await _fetchProvider(
@@ -347,11 +346,12 @@ class EmoteManager extends ChangeNotifier {
       _isProcessingPrecache = false;
       return;
     }
-    final batch =
-        _precacheQueue.take(_maxConcurrentPrecache).toList();
+    final batch = _precacheQueue.take(_maxConcurrentPrecache).toList();
     _precacheQueue.removeRange(0, batch.length);
-    Future.wait(batch.map(_precacheEmote), eagerError: false)
-        .then((_) => _stepPrecache());
+    Future.wait(
+      batch.map(_precacheEmote),
+      eagerError: false,
+    ).then((_) => _stepPrecache());
   }
 
   Future<void> _precacheEmote(GenericEmote emote) async {

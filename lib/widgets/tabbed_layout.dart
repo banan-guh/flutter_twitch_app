@@ -98,9 +98,7 @@ class TabbedLayoutState extends State<TabbedLayout>
       children: [
         Container(
           decoration: BoxDecoration(
-            border: Border(
-              bottom: BorderSide(color: theme.dividerColor),
-            ),
+            border: Border(bottom: BorderSide(color: theme.dividerColor)),
           ),
           child: SizedBox(
             height: 40,

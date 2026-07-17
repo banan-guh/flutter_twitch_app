@@ -15,10 +15,12 @@ class TwitchBadgeService {
 
   Future<void> fetchGlobalBadges(TwitchAuth auth) async {
     if (_globalFetched) return;
-    _globalBadges.addAll(await _fetchBadgeSets(
-      Uri.parse('https://api.twitch.tv/helix/chat/badges/global'),
-      auth,
-    ));
+    _globalBadges.addAll(
+      await _fetchBadgeSets(
+        Uri.parse('https://api.twitch.tv/helix/chat/badges/global'),
+        auth,
+      ),
+    );
     _globalFetched = true;
   }
 
@@ -69,10 +71,7 @@ class TwitchBadgeService {
     return _channelNames[broadcasterId];
   }
 
-  Future<void> fetchChannelAvatar(
-    TwitchAuth auth,
-    String broadcasterId,
-  ) async {
+  Future<void> fetchChannelAvatar(TwitchAuth auth, String broadcasterId) async {
     if (_channelAvatars.containsKey(broadcasterId)) return;
     try {
       final uri = Uri.parse(
@@ -132,9 +131,11 @@ class TwitchBadgeService {
           final vMap = v as Map<String, dynamic>;
           final id = vMap['id'] as String?;
           final title = vMap['title'] as String? ?? '';
-          final imageUrl = (vMap['image_url_4x'] ??
-              vMap['image_url_2x'] ??
-              vMap['image_url_1x']) as String?;
+          final imageUrl =
+              (vMap['image_url_4x'] ??
+                      vMap['image_url_2x'] ??
+                      vMap['image_url_1x'])
+                  as String?;
           if (id == null || imageUrl == null) continue;
           versions[id] = BadgeVersion(id: id, title: title, imageUrl: imageUrl);
         }
