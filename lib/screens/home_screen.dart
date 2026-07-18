@@ -3504,8 +3504,6 @@ class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
             )
           : const Center(child: Text('No subscriber emotes available'));
     }
-    const cellSize = 48.0;
-    const spacing = 8.0;
     return CustomScrollView(
       controller: scrollController,
       slivers: [
@@ -3522,22 +3520,16 @@ class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
               ),
             ),
           ),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.all(4),
-              child: Wrap(
-                spacing: spacing,
-                runSpacing: spacing,
-                alignment: WrapAlignment.center,
-                children: [
-                  for (final emote in entry.value)
-                    SizedBox(
-                      width: cellSize,
-                      height: cellSize,
-                      child: _buildEmoteGridItem(emote),
-                    ),
-                ],
-              ),
+          SliverGrid(
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 5,
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
+              childAspectRatio: 1,
+            ),
+            delegate: SliverChildBuilderDelegate(
+              (_, i) => _buildEmoteGridItem(entry.value[i]),
+              childCount: entry.value.length,
             ),
           ),
         ],
@@ -3580,24 +3572,18 @@ class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
     List<GenericEmote> emotes,
     ScrollController? scrollController,
   ) {
-    const cellSize = 48.0;
-    const spacing = 8.0;
-    return SingleChildScrollView(
+    return GridView.builder(
       controller: scrollController,
       padding: const EdgeInsets.all(4),
-      child: Wrap(
-        spacing: spacing,
-        runSpacing: spacing,
-        alignment: WrapAlignment.center,
-        children: [
-          for (final emote in emotes)
-            SizedBox(
-              width: cellSize,
-              height: cellSize,
-              child: _buildEmoteGridItem(emote),
-            ),
-        ],
+      physics: const AlwaysScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 5,
+        mainAxisSpacing: 8,
+        crossAxisSpacing: 8,
+        childAspectRatio: 1,
       ),
+      itemCount: emotes.length,
+      itemBuilder: (_, i) => _buildEmoteGridItem(emotes[i]),
     );
   }
 
