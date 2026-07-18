@@ -88,8 +88,9 @@ class _HomeScreenState extends State<HomeScreen> {
   late final DraggableScrollableController _emoteSheetCtrl;
   static const _sheetAnimDuration = Duration(milliseconds: 250);
   static const _sheetCloseDuration = Duration(milliseconds: 180);
-  static const _emoteMaxFraction = 0.55;
+  static const _emoteMaxFraction = 0.6;
   static const _fullHeightFraction = 1.0;
+  double? _emoteSheetBoxHeight;
   final _threadPanelData = ValueNotifier<_ThreadPanelData?>(null);
   final _mentionsPanelData = ValueNotifier<List<TwitchMessage>?>(null);
 
@@ -1694,8 +1695,14 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             Expanded(
               child: LayoutBuilder(
-                builder: (context, _) {
+                builder: (context, constraints) {
                   final statusBarH = MediaQuery.of(context).padding.top;
+                  if (bottomInset == 0) {
+                    _emoteSheetBoxHeight = constraints.maxHeight;
+                  }
+                  final sheetBoxHeight =
+                      (_emoteSheetBoxHeight ?? constraints.maxHeight) -
+                      statusBarH;
                   return Stack(
                     clipBehavior: Clip.hardEdge,
                     children: [
@@ -1910,12 +1917,16 @@ class _HomeScreenState extends State<HomeScreen> {
                           },
                         ),
                       ),
-                      // Emote sheet — always mounted, always 55%.
+                      // Emote sheet — always mounted, always 60%.
+                      // Box height is fixed (captured without keyboard);
+                      // bottom: 0 stays anchored to the Stack's bottom edge
+                      // which already moves up when the keyboard shrinks
+                      // the Expanded area (same as the input below it).
                       Positioned(
-                        top: statusBarH,
                         bottom: 0,
                         left: 0,
                         right: 0,
+                        height: sheetBoxHeight,
                         child: LayoutBuilder(
                           builder: (context, constraints) {
                             final totalAvailH = constraints.maxHeight;
@@ -3416,7 +3427,7 @@ class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
               }
             },
             child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
+              padding: const EdgeInsets.only(top: 12, bottom: 16),
               child: Center(
                 child: SizedBox(
                   width: 32,
