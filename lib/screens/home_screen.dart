@@ -90,7 +90,6 @@ class _HomeScreenState extends State<HomeScreen> {
   static const _sheetCloseDuration = Duration(milliseconds: 180);
   static const _emoteMaxFraction = 0.55;
   static const _fullHeightFraction = 1.0;
-  double _emoteSheetMaxSize = _emoteMaxFraction;
   final _threadPanelData = ValueNotifier<_ThreadPanelData?>(null);
   final _mentionsPanelData = ValueNotifier<List<TwitchMessage>?>(null);
 
@@ -1465,9 +1464,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _showEmoteMenu() async {
-    final keyboardUp = MediaQuery.of(context).viewInsets.bottom > 0;
     if (_activePanel != OverlayPanel.closed) await _closePanel();
-    _emoteSheetMaxSize = keyboardUp ? _fullHeightFraction : _emoteMaxFraction;
     setState(() => _activePanel = OverlayPanel.emotes);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _emoteSheetCtrl.isAttached) {
@@ -1913,7 +1910,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           },
                         ),
                       ),
-                      // Emote sheet — always mounted, 55% or full (keyboard).
+                      // Emote sheet — always mounted, always 55%.
                       Positioned(
                         top: statusBarH,
                         bottom: 0,
@@ -1928,14 +1925,14 @@ class _HomeScreenState extends State<HomeScreen> {
                                 controller: _emoteSheetCtrl,
                                 initialChildSize: 0,
                                 minChildSize: 0,
-                                maxChildSize: _emoteSheetMaxSize,
+                                maxChildSize: _emoteMaxFraction,
                                 snap: true,
                                 builder: (context, scrollController) {
                                   final sheetTheme = Theme.of(context);
                                   return _buildSlideUpContent(
                                     controller: _emoteSheetCtrl,
                                     totalAvailH: totalAvailH,
-                                    maxSize: _emoteSheetMaxSize,
+                                    maxSize: _emoteMaxFraction,
                                     child: RepaintBoundary(
                                       child: Material(
                                         color: sheetTheme.scaffoldBackgroundColor,
