@@ -1782,30 +1782,33 @@ class _HomeScreenState extends State<HomeScreen> {
                         bottom: 0,
                         left: 0,
                         right: 0,
-                        child: DraggableScrollableSheet(
-                          controller: _threadSheetCtrl,
-                          initialChildSize: 0,
-                          minChildSize: 0,
-                          maxChildSize: _fullHeightFraction,
-                          snap: true,
-                          builder: (context, scrollController) {
-                            final sheetTheme = Theme.of(context);
-                            return RepaintBoundary(
-                              child: Material(
-                                color: sheetTheme.scaffoldBackgroundColor,
-                                child: _ThreadPanelWidget(
-                                  key: const ValueKey('thread_panel'),
-                                  data: _threadPanelData,
-                                  uiScale: _uiScale,
-                                  onClose: _closePanel,
-                                  onLongPress: _showThreadMessageMenu,
-                                  buildBadgeSpans: _buildBadgeSpans,
-                                  buildMessageSpans: _buildMessageSpans,
-                                  scrollController: scrollController,
+                        child: IgnorePointer(
+                          ignoring: _activePanel != OverlayPanel.thread,
+                          child: DraggableScrollableSheet(
+                            controller: _threadSheetCtrl,
+                            initialChildSize: 0,
+                            minChildSize: 0,
+                            maxChildSize: _fullHeightFraction,
+                            snap: true,
+                            builder: (context, scrollController) {
+                              final sheetTheme = Theme.of(context);
+                              return RepaintBoundary(
+                                child: Material(
+                                  color: sheetTheme.scaffoldBackgroundColor,
+                                  child: _ThreadPanelWidget(
+                                    key: const ValueKey('thread_panel'),
+                                    data: _threadPanelData,
+                                    uiScale: _uiScale,
+                                    onClose: _closePanel,
+                                    onLongPress: _showThreadMessageMenu,
+                                    buildBadgeSpans: _buildBadgeSpans,
+                                    buildMessageSpans: _buildMessageSpans,
+                                    scrollController: scrollController,
+                                  ),
                                 ),
-                              ),
-                            );
-                          },
+                              );
+                            },
+                          ),
                         ),
                       ),
                       // Mentions sheet — always mounted, full height below
@@ -1815,29 +1818,32 @@ class _HomeScreenState extends State<HomeScreen> {
                         bottom: 0,
                         left: 0,
                         right: 0,
-                        child: DraggableScrollableSheet(
-                          controller: _mentionsSheetCtrl,
-                          initialChildSize: 0,
-                          minChildSize: 0,
-                          maxChildSize: _fullHeightFraction,
-                          snap: true,
-                          builder: (context, scrollController) {
-                            final sheetTheme = Theme.of(context);
-                            return RepaintBoundary(
-                              child: Material(
-                                color: sheetTheme.scaffoldBackgroundColor,
-                                child: _MentionsPanelWidget(
-                                  key: const ValueKey('mentions_panel'),
-                                  messages: _mentionsPanelData,
-                                  uiScale: _uiScale,
-                                  onClose: _closePanel,
-                                  buildBadgeSpans: _buildBadgeSpans,
-                                  buildMessageSpans: _buildMessageSpans,
-                                  scrollController: scrollController,
+                        child: IgnorePointer(
+                          ignoring: _activePanel != OverlayPanel.mentions,
+                          child: DraggableScrollableSheet(
+                            controller: _mentionsSheetCtrl,
+                            initialChildSize: 0,
+                            minChildSize: 0,
+                            maxChildSize: _fullHeightFraction,
+                            snap: true,
+                            builder: (context, scrollController) {
+                              final sheetTheme = Theme.of(context);
+                              return RepaintBoundary(
+                                child: Material(
+                                  color: sheetTheme.scaffoldBackgroundColor,
+                                  child: _MentionsPanelWidget(
+                                    key: const ValueKey('mentions_panel'),
+                                    messages: _mentionsPanelData,
+                                    uiScale: _uiScale,
+                                    onClose: _closePanel,
+                                    buildBadgeSpans: _buildBadgeSpans,
+                                    buildMessageSpans: _buildMessageSpans,
+                                    scrollController: scrollController,
+                                  ),
                                 ),
-                              ),
-                            );
-                          },
+                              );
+                            },
+                          ),
                         ),
                       ),
                       // Emote sheet — always mounted, 55% or full (keyboard).
@@ -1846,34 +1852,37 @@ class _HomeScreenState extends State<HomeScreen> {
                         bottom: 0,
                         left: 0,
                         right: 0,
-                        child: DraggableScrollableSheet(
-                          controller: _emoteSheetCtrl,
-                          initialChildSize: 0,
-                          minChildSize: 0,
-                          maxChildSize:
-                              keyboardH > 0
-                              ? _fullHeightFraction
-                              : _emoteMaxFraction,
-                          snap: true,
-                          builder: (context, scrollController) {
-                            final sheetTheme = Theme.of(context);
-                            return RepaintBoundary(
-                              child: Material(
-                                color: sheetTheme.scaffoldBackgroundColor,
-                                child: _EmoteMenuPanelWidget(
-                                  key: const ValueKey('emote_panel'),
-                                  isActive: _activePanel == OverlayPanel.emotes,
-                                  uiScale: _uiScale,
-                                  selectedChannel: _selectedChannel,
-                                  onEmoteSelected: _onEmoteSelected,
-                                  onClose: _closePanel,
-                                  emoteManager: _emoteManager,
-                                  scrollController: scrollController,
-                                  sheetCtrl: _emoteSheetCtrl,
+                        child: IgnorePointer(
+                          ignoring: _activePanel != OverlayPanel.emotes,
+                          child: DraggableScrollableSheet(
+                            controller: _emoteSheetCtrl,
+                            initialChildSize: 0,
+                            minChildSize: 0,
+                            maxChildSize:
+                                keyboardH > 0
+                                ? _fullHeightFraction
+                                : _emoteMaxFraction,
+                            snap: true,
+                            builder: (context, scrollController) {
+                              final sheetTheme = Theme.of(context);
+                              return RepaintBoundary(
+                                child: Material(
+                                  color: sheetTheme.scaffoldBackgroundColor,
+                                  child: _EmoteMenuPanelWidget(
+                                    key: const ValueKey('emote_panel'),
+                                    isActive: _activePanel == OverlayPanel.emotes,
+                                    uiScale: _uiScale,
+                                    selectedChannel: _selectedChannel,
+                                    onEmoteSelected: _onEmoteSelected,
+                                    onClose: _closePanel,
+                                    emoteManager: _emoteManager,
+                                    scrollController: scrollController,
+                                    sheetCtrl: _emoteSheetCtrl,
+                                  ),
                                 ),
-                              ),
-                            );
-                          },
+                              );
+                            },
+                          ),
                         ),
                       ),
                     ],
