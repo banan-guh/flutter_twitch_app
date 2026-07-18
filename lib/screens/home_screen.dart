@@ -90,6 +90,7 @@ class _HomeScreenState extends State<HomeScreen> {
   static const _sheetCloseDuration = Duration(milliseconds: 180);
   static const _emoteMaxFraction = 0.55;
   static const _fullHeightFraction = 1.0;
+  double _emoteSheetMaxSize = _emoteMaxFraction;
   final _threadPanelData = ValueNotifier<_ThreadPanelData?>(null);
   final _mentionsPanelData = ValueNotifier<List<TwitchMessage>?>(null);
 
@@ -117,6 +118,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _onSheetSizeChanged(OverlayPanel panel, DraggableScrollableController ctrl) {
     // When the user drags a sheet down to size 0, close the panel.
+    debugPrint('[SHEET_SIZE] panel=$panel size=${ctrl.isAttached ? ctrl.size : "detached"} activePanel=$_activePanel');
     if (_activePanel == panel && ctrl.isAttached && ctrl.size <= 0.001) {
       setState(() {
         _activePanel = OverlayPanel.closed;
@@ -1464,7 +1466,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _showEmoteMenu() async {
+    final keyboardUp = MediaQuery.of(context).viewInsets.bottom > 0;
     if (_activePanel != OverlayPanel.closed) await _closePanel();
+    _emoteSheetMaxSize = keyboardUp ? _fullHeightFraction : _emoteMaxFraction;
+    debugPrint('[EMOTE_OPEN] keyboardUp=$keyboardUp _emoteSheetMaxSize=$_emoteSheetMaxSize activePanel=$_activePanel');
     setState(() => _activePanel = OverlayPanel.emotes);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _emoteSheetCtrl.isAttached) {
@@ -1695,7 +1700,6 @@ class _HomeScreenState extends State<HomeScreen> {
             Expanded(
               child: LayoutBuilder(
                 builder: (context, _) {
-                  final keyboardH = MediaQuery.of(context).viewInsets.bottom;
                   final statusBarH = MediaQuery.of(context).padding.top;
                   return Stack(
                     clipBehavior: Clip.hardEdge,
@@ -1920,24 +1924,21 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: LayoutBuilder(
                           builder: (context, constraints) {
                             final totalAvailH = constraints.maxHeight;
-                            final emoteMaxSize =
-                                keyboardH > 0
-                                ? _fullHeightFraction
-                                : _emoteMaxFraction;
+                            debugPrint('[EMOTE_BUILDER] _emoteSheetMaxSize=$_emoteSheetMaxSize totalAvailH=$totalAvailH activePanel=$_activePanel');
                             return IgnorePointer(
                               ignoring: _activePanel != OverlayPanel.emotes,
                               child: DraggableScrollableSheet(
                                 controller: _emoteSheetCtrl,
                                 initialChildSize: 0,
                                 minChildSize: 0,
-                                maxChildSize: emoteMaxSize,
+                                maxChildSize: _emoteSheetMaxSize,
                                 snap: true,
                                 builder: (context, scrollController) {
                                   final sheetTheme = Theme.of(context);
                                   return _buildSlideUpContent(
                                     controller: _emoteSheetCtrl,
                                     totalAvailH: totalAvailH,
-                                    maxSize: emoteMaxSize,
+                                    maxSize: _emoteSheetMaxSize,
                                     child: RepaintBoundary(
                                       child: Material(
                                         color: sheetTheme.scaffoldBackgroundColor,
