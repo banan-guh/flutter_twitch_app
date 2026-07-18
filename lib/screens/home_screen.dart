@@ -1514,6 +1514,30 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// Wraps [child] with a slide-up transform driven by [controller].
+  ///
+  /// The content is always sized to [maxSize] fraction of the available height,
+  /// but bottom-aligned within the current sheet box. As the sheet grows from
+  /// size 0 → [maxSize], the content appears to slide up from below the
+  /// viewport edge.
+  ///
+  /// Falls back to the untransformed [child] when the controller is not yet
+  /// attached (first frame before the scrollable is laid out).
+  Widget _buildSlideUpContent({
+    required DraggableScrollableController controller,
+    required double maxSize,
+    required Widget child,
+  }) {
+    final size = controller.isAttached ? controller.size : null;
+    if (size == null || size <= 0 || maxSize <= 0) return child;
+    final heightFactor = maxSize / size;
+    return FractionallySizedBox(
+      heightFactor: heightFactor,
+      alignment: Alignment.bottomCenter,
+      child: child,
+    );
+  }
+
   List<TwitchMessage> _computeThreadMessages() {
     final root = _openThreadRoot;
     if (root == null) return const [];
@@ -1792,18 +1816,22 @@ class _HomeScreenState extends State<HomeScreen> {
                             snap: true,
                             builder: (context, scrollController) {
                               final sheetTheme = Theme.of(context);
-                              return RepaintBoundary(
-                                child: Material(
-                                  color: sheetTheme.scaffoldBackgroundColor,
-                                  child: _ThreadPanelWidget(
-                                    key: const ValueKey('thread_panel'),
-                                    data: _threadPanelData,
-                                    uiScale: _uiScale,
-                                    onClose: _closePanel,
-                                    onLongPress: _showThreadMessageMenu,
-                                    buildBadgeSpans: _buildBadgeSpans,
-                                    buildMessageSpans: _buildMessageSpans,
-                                    scrollController: scrollController,
+                              return _buildSlideUpContent(
+                                controller: _threadSheetCtrl,
+                                maxSize: _fullHeightFraction,
+                                child: RepaintBoundary(
+                                  child: Material(
+                                    color: sheetTheme.scaffoldBackgroundColor,
+                                    child: _ThreadPanelWidget(
+                                      key: const ValueKey('thread_panel'),
+                                      data: _threadPanelData,
+                                      uiScale: _uiScale,
+                                      onClose: _closePanel,
+                                      onLongPress: _showThreadMessageMenu,
+                                      buildBadgeSpans: _buildBadgeSpans,
+                                      buildMessageSpans: _buildMessageSpans,
+                                      scrollController: scrollController,
+                                    ),
                                   ),
                                 ),
                               );
@@ -1828,17 +1856,21 @@ class _HomeScreenState extends State<HomeScreen> {
                             snap: true,
                             builder: (context, scrollController) {
                               final sheetTheme = Theme.of(context);
-                              return RepaintBoundary(
-                                child: Material(
-                                  color: sheetTheme.scaffoldBackgroundColor,
-                                  child: _MentionsPanelWidget(
-                                    key: const ValueKey('mentions_panel'),
-                                    messages: _mentionsPanelData,
-                                    uiScale: _uiScale,
-                                    onClose: _closePanel,
-                                    buildBadgeSpans: _buildBadgeSpans,
-                                    buildMessageSpans: _buildMessageSpans,
-                                    scrollController: scrollController,
+                              return _buildSlideUpContent(
+                                controller: _mentionsSheetCtrl,
+                                maxSize: _fullHeightFraction,
+                                child: RepaintBoundary(
+                                  child: Material(
+                                    color: sheetTheme.scaffoldBackgroundColor,
+                                    child: _MentionsPanelWidget(
+                                      key: const ValueKey('mentions_panel'),
+                                      messages: _mentionsPanelData,
+                                      uiScale: _uiScale,
+                                      onClose: _closePanel,
+                                      buildBadgeSpans: _buildBadgeSpans,
+                                      buildMessageSpans: _buildMessageSpans,
+                                      scrollController: scrollController,
+                                    ),
                                   ),
                                 ),
                               );
@@ -1865,19 +1897,26 @@ class _HomeScreenState extends State<HomeScreen> {
                             snap: true,
                             builder: (context, scrollController) {
                               final sheetTheme = Theme.of(context);
-                              return RepaintBoundary(
-                                child: Material(
-                                  color: sheetTheme.scaffoldBackgroundColor,
-                                  child: _EmoteMenuPanelWidget(
-                                    key: const ValueKey('emote_panel'),
-                                    isActive: _activePanel == OverlayPanel.emotes,
-                                    uiScale: _uiScale,
-                                    selectedChannel: _selectedChannel,
-                                    onEmoteSelected: _onEmoteSelected,
-                                    onClose: _closePanel,
-                                    emoteManager: _emoteManager,
-                                    scrollController: scrollController,
-                                    sheetCtrl: _emoteSheetCtrl,
+                              return _buildSlideUpContent(
+                                controller: _emoteSheetCtrl,
+                                maxSize:
+                                    keyboardH > 0
+                                    ? _fullHeightFraction
+                                    : _emoteMaxFraction,
+                                child: RepaintBoundary(
+                                  child: Material(
+                                    color: sheetTheme.scaffoldBackgroundColor,
+                                    child: _EmoteMenuPanelWidget(
+                                      key: const ValueKey('emote_panel'),
+                                      isActive: _activePanel == OverlayPanel.emotes,
+                                      uiScale: _uiScale,
+                                      selectedChannel: _selectedChannel,
+                                      onEmoteSelected: _onEmoteSelected,
+                                      onClose: _closePanel,
+                                      emoteManager: _emoteManager,
+                                      scrollController: scrollController,
+                                      sheetCtrl: _emoteSheetCtrl,
+                                    ),
                                   ),
                                 ),
                               );
