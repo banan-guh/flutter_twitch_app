@@ -1768,4 +1768,60 @@ void main() {
       },
     );
   });
+
+  group('Emote panel drag clamp', () {
+    testWidgets(
+      'jumpTo with unclamped pixelsToSize throws assertion error',
+      (WidgetTester tester) async {
+        final controller = DraggableScrollableController();
+        addTearDown(() => controller.dispose());
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SizedBox.expand(
+                child: DraggableScrollableSheet(
+                  controller: controller,
+                  initialChildSize: 0,
+                  minChildSize: 0,
+                  maxChildSize: 0.6,
+                  snap: true,
+                  builder: (context, scrollController) => SizedBox(
+                    width: double.infinity,
+                    height: 200,
+                    child: ListView(
+                      controller: scrollController,
+                      children: List.generate(
+                        50,
+                        (i) => ListTile(title: Text('item $i')),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        controller.jumpTo(0.6);
+        await tester.pumpAndSettle();
+
+        final maxPixels = controller.pixels + 2000;
+        final beyondSize = controller.pixelsToSize(maxPixels);
+
+        expect(beyondSize, greaterThan(1.0));
+
+        expect(
+          () => controller.jumpTo(beyondSize),
+          throwsA(isA<AssertionError>()),
+        );
+
+        expect(
+          () => controller.jumpTo(beyondSize.clamp(0.0, 1.0)),
+          returnsNormally,
+        );
+      },
+    );
+  });
 }

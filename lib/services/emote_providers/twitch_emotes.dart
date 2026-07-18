@@ -20,6 +20,48 @@ class TwitchEmoteProvider {
     return _parseEmotes(data['data'] as List<dynamic>? ?? []);
   }
 
+  static Future<Map<String, List<GenericEmote>>> fetchAllUserEmotes({
+    String? accessToken,
+  }) async {
+    final uri = Uri.parse('https://api.twitch.tv/helix/chat/emotes');
+    final headers = <String, String>{'Client-ID': TwitchConfig.clientId};
+    if (accessToken != null) {
+      headers['Authorization'] = 'Bearer $accessToken';
+    }
+    final res = await http.get(uri, headers: headers);
+    debugPrint(
+      'Twitch user emotes (all): ${res.statusCode} — ${res.body.length} bytes',
+    );
+    if (res.statusCode != 200) return {};
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
+    final items = data['data'] as List<dynamic>? ?? [];
+    final result = <String, List<GenericEmote>>{};
+    for (final item in items) {
+      final id = item['id'] as String?;
+      final name = item['name'] as String?;
+      final ownerId = item['owner_id'] as String?;
+      if (id == null || name == null || ownerId == null) continue;
+      final format =
+          (item['images'] as Map<String, dynamic>?)?['url_4x'] as String? ??
+          (item['images'] as Map<String, dynamic>?)?['url_2x'] as String? ??
+          (item['images'] as Map<String, dynamic>?)?['url_1x'] as String?;
+      if (format == null) continue;
+      final tier = item['tier'] as String?;
+      result.putIfAbsent(ownerId, () => []).add(
+        GenericEmote(
+          id: id,
+          code: name,
+          type: EmoteType.twitch,
+          url: format,
+          scope: EmoteScope.channel,
+          tier: tier,
+        ),
+      );
+    }
+    debugPrint('Twitch user emotes: ${result.length} owners');
+    return result;
+  }
+
   static Future<List<GenericEmote>> fetchChannel(
     String broadcasterId, {
     String? accessToken,
@@ -29,12 +71,13 @@ class TwitchEmoteProvider {
       'https://api.twitch.tv/helix/chat/emotes?broadcaster_id=$broadcasterId',
     );
     final headers = <String, String>{'Client-ID': TwitchConfig.clientId};
-    if (accessToken != null) {
+    final hasToken = accessToken != null;
+    if (hasToken) {
       headers['Authorization'] = 'Bearer $accessToken';
     }
     final res = await http.get(uri, headers: headers);
     debugPrint(
-      'Twitch channel emotes ($broadcasterId): ${res.statusCode} — ${res.body.length} bytes',
+      'Twitch channel emotes ($broadcasterId) hasToken=$hasToken: ${res.statusCode} — ${res.body.length} bytes',
     );
     debugPrint('Twitch channel body: ${res.body}');
     if (res.statusCode != 200) return [];
@@ -75,6 +118,11 @@ class TwitchEmoteProvider {
       );
     }
     debugPrint('Twitch parsed ${emotes.length} emotes');
+    if (channel) {
+      for (final e in emotes) {
+        debugPrint('  Twitch emote: ${e.code} id=${e.id} tier=${e.tier}');
+      }
+    }
     return emotes;
   }
 }

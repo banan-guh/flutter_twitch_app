@@ -72,6 +72,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _messageKeys = <String, GlobalKey>{};
   final _chatStatus = <String, String>{};
   final _channelUserIds = <String, String>{};
+  final _channelsEmotesResolved = <String>{};
   int _unreadMentions = 0;
   final _channelsWithUnread = <String>{};
   final _channelsWithUnreadMentions = <String>{};
@@ -260,6 +261,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       _emoteManager.evictGlobal();
       _emoteManager.preloadGlobalEmotes();
+      await _loadUserTwitchEmotes();
       _badgeService.dispose();
       _badgeService.fetchGlobalBadges(widget.twitchAuth);
       for (final channel in _channels) {
@@ -274,6 +276,20 @@ class _HomeScreenState extends State<HomeScreen> {
       debugPrint('_refreshEmotesAfterAuth failed: $e');
     }
     if (mounted) setState(() {});
+  }
+
+  Future<void> _loadUserTwitchEmotes() async {
+    final auth = widget.twitchAuth;
+    if (!auth.isConfigured) return;
+    final reverse = <String, String>{};
+    for (final entry in _channelUserIds.entries) {
+      reverse[entry.value] = entry.key;
+    }
+    if (reverse.isEmpty) return;
+    await _emoteManager.loadUserTwitchEmotes(
+      accessToken: auth.accessToken,
+      userIdToChannel: reverse,
+    );
   }
 
   void _loadMaxMessages() async {
@@ -396,6 +412,7 @@ class _HomeScreenState extends State<HomeScreen> {
         await Future.delayed(const Duration(milliseconds: 500));
         try {
           await _subscribeAll();
+          await _loadUserTwitchEmotes();
         } catch (_) {}
         for (final channel in _channels) {
           if (_historyLoaded.contains(channel)) {
@@ -877,24 +894,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     _ircRead.join(name);
 
-    if (_eventSub.isConnected && _eventSub.sessionId != null) {
-      await _subscribeChannel(name);
-    }
-
-    if (_channelUserIds[name] == null) {
-      final userId = await TwitchApi.getUserId(auth, name);
-      if (userId != null) {
-        _channelUserIds[name] = userId;
-      }
-    }
-
-    final broadcasterId = _channelUserIds[name];
-    _emoteManager.accessToken = widget.twitchAuth.accessToken;
-    await _emoteManager.resolveEmotes(name, broadcasterId);
-
-    if (mounted && _emoteManager.fetchError != null) {
-      _addSystemMessage(name, 'Emotes: ${_emoteManager.fetchError}');
-    }
+    await _subscribeChannel(name);
 
     if (mounted) setState(() {});
   }
@@ -948,6 +948,16 @@ class _HomeScreenState extends State<HomeScreen> {
       if (channelUserId == null) return;
       _channelUserIds[channelName] = channelUserId;
       _badgeService.fetchChannelBadges(auth, channelUserId, channelName);
+
+      _emoteManager.accessToken = auth.accessToken;
+      debugPrint(
+        '_subscribeChannel $channelName userId=$channelUserId '
+        'hasToken=${auth.accessToken != null} resolved=${_channelsEmotesResolved.contains(channelName)}',
+      );
+      if (!_channelsEmotesResolved.contains(channelName)) {
+        await _emoteManager.resolveEmotes(channelName, channelUserId);
+        _channelsEmotesResolved.add(channelName);
+      }
 
       if (_currentUserLogin == null) {
         final currentUser = await TwitchApi.getCurrentUser(auth);
@@ -1050,6 +1060,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void _removeChannel(String channel) {
     _ircRead.part(channel);
     _emoteManager.evictChannel(channel);
+    _channelsEmotesResolved.remove(channel);
     setState(() {
       _channels.remove(channel);
       _channelNotifier.value = List.of(_channels);
@@ -1074,8 +1085,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final channel = _selectedChannel;
     if (text.isEmpty ||
         channel == null ||
-        _activePanel == OverlayPanel.mentions)
+        _activePanel == OverlayPanel.mentions) {
       return;
+    }
 
     if (!widget.twitchAuth.isConfigured) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3408,10 +3420,11 @@ class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
       child: Column(
         children: [
           GestureDetector(
+            key: const Key('emote_panel_handle'),
             behavior: HitTestBehavior.opaque,
             onVerticalDragUpdate: (details) {
               final newPixels = widget.sheetCtrl.pixels - details.primaryDelta!;
-              final newSize = widget.sheetCtrl.pixelsToSize(newPixels);
+              final newSize = widget.sheetCtrl.pixelsToSize(newPixels).clamp(0.0, 1.0);
               if (widget.sheetCtrl.isAttached) {
                 widget.sheetCtrl.jumpTo(newSize);
               }
@@ -3495,6 +3508,10 @@ class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
 
   Widget _buildEmoteSubsGrid(ScrollController? scrollController) {
     final byChannel = widget.emoteManager.subscriberEmotesByChannel();
+    debugPrint(
+      '_buildEmoteSubsGrid: ${byChannel.length} channels with subs, '
+      'total emotes: ${byChannel.values.fold<int>(0, (s, l) => s + l.length)}',
+    );
     if (byChannel.isEmpty) {
       return _buildEmoteEmptyState(
         scrollController,

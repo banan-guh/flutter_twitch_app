@@ -60,6 +60,13 @@ class EmoteManager extends ChangeNotifier {
       ..sort((a, b) => a.code.compareTo(b.code));
   }
 
+  List<GenericEmote> channelEmotes(String channel) {
+    final cached = _channelCaches[channel];
+    if (cached == null) return [];
+    return cached.suggestions.toList()
+      ..sort((a, b) => a.code.compareTo(b.code));
+  }
+
   Map<String, List<GenericEmote>> subscriberEmotesByChannel() {
     final result = <String, List<GenericEmote>>{};
     final keys = _channelCaches.keys.toList()..sort();
@@ -148,6 +155,44 @@ class EmoteManager extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> loadUserTwitchEmotes({
+    required String? accessToken,
+    required Map<String, String> userIdToChannel,
+  }) async {
+    if (accessToken == null) return;
+    final byOwner = await TwitchEmoteProvider.fetchAllUserEmotes(
+      accessToken: accessToken,
+    );
+    if (byOwner.isEmpty) return;
+    for (final entry in byOwner.entries) {
+      final channel = userIdToChannel[entry.key];
+      if (channel == null) continue;
+      final withChannel = entry.value
+          .map((e) => GenericEmote(
+                id: e.id,
+                code: e.code,
+                type: e.type,
+                url: e.url,
+                scope: e.scope,
+                tier: e.tier,
+                ownerChannel: channel,
+              ))
+          .toList();
+      final existing = _channelTwitchEmotes[channel] ?? [];
+      final merged = <GenericEmote>[
+        for (final e in existing)
+          if (e.tier == null) e,
+        ...withChannel,
+      ];
+      _channelTwitchEmotes[channel] = merged;
+      debugPrint(
+        'EmoteManager: loaded ${withChannel.length} user Twitch emotes '
+        'for $channel (subs: ${merged.where((e) => e.tier != null).length})',
+      );
+    }
+    notifyListeners();
+  }
+
   Future<void> resolveEmotes(String channel, String? broadcasterId) async {
     _lastErrors.clear();
     final cached = await _loadFromPrefs(
@@ -164,6 +209,10 @@ class EmoteManager extends ChangeNotifier {
     _channelTwitchEmotes[channel] = emotes
         .where((e) => e.type == EmoteType.twitch)
         .toList();
+    debugPrint(
+      'EmoteManager: $_channelTwitchEmotes[channel].length Twitch emotes '
+      'for $channel (subs: ${_channelTwitchEmotes[channel]!.where((e) => e.tier != null).length})',
+    );
     final map = _buildChannelMap(emotes);
     _channelCaches[channel] = map;
     _channelFetchTimes[channel] = DateTime.now();
@@ -231,6 +280,9 @@ class EmoteManager extends ChangeNotifier {
     String? broadcasterId, {
     String? channelName,
   }) async {
+    debugPrint(
+      'EmoteManager: _fetchAllChannel broadcasterId=$broadcasterId channel=$channelName',
+    );
     if (broadcasterId == null) return [];
     final all = <GenericEmote>[];
     await _fetchProvider(
