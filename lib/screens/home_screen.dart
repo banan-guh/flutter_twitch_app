@@ -2968,7 +2968,13 @@ class _ThreadPanelWidgetState extends State<_ThreadPanelWidget> {
               Divider(height: 1, color: theme.dividerColor),
               Expanded(
                 child: threadMsgs.isEmpty
-                    ? const Center(child: Text('No messages found'))
+                    ? ListView(
+                        controller: widget.scrollController,
+                        padding: const EdgeInsets.only(bottom: 8),
+                        children: const [
+                          Center(child: Text('No messages found')),
+                        ],
+                      )
                     : ListView.builder(
                         controller: widget.scrollController,
                         physics: const ClampingScrollPhysics(),
@@ -3145,7 +3151,13 @@ class _MentionsPanelWidgetState extends State<_MentionsPanelWidget> {
               Divider(height: 1, color: theme.dividerColor),
               Expanded(
                 child: messageList.isEmpty
-                    ? const Center(child: Text('No mentions or whispers'))
+                    ? ListView(
+                        controller: widget.scrollController,
+                        padding: const EdgeInsets.only(bottom: 8),
+                        children: const [
+                          Center(child: Text('No mentions or whispers')),
+                        ],
+                      )
                     : ListView.builder(
                         controller: widget.scrollController,
                         physics: const ClampingScrollPhysics(),
@@ -3382,10 +3394,24 @@ class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
 
   Widget _buildEmoteRecentGrid(ScrollController? scrollController) {
     if (!_recentEmotesLoaded) {
-      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+      return scrollController != null
+          ? ListView(
+              controller: scrollController,
+              children: const [
+                Center(child: CircularProgressIndicator(strokeWidth: 2)),
+              ],
+            )
+          : const Center(child: CircularProgressIndicator(strokeWidth: 2));
     }
     if (_cachedRecentEmotes.isEmpty) {
-      return const Center(child: Text('No recently used emotes'));
+      return scrollController != null
+          ? ListView(
+              controller: scrollController,
+              children: const [
+                Center(child: Text('No recently used emotes')),
+              ],
+            )
+          : const Center(child: Text('No recently used emotes'));
     }
     return _buildEmoteGrid(_cachedRecentEmotes, scrollController);
   }
@@ -3393,7 +3419,14 @@ class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
   Widget _buildEmoteSubsGrid(ScrollController? scrollController) {
     final byChannel = widget.emoteManager.subscriberEmotesByChannel();
     if (byChannel.isEmpty) {
-      return const Center(child: Text('No subscriber emotes available'));
+      return scrollController != null
+          ? ListView(
+              controller: scrollController,
+              children: const [
+                Center(child: Text('No subscriber emotes available')),
+              ],
+            )
+          : const Center(child: Text('No subscriber emotes available'));
     }
     return CustomScrollView(
       controller: scrollController,
@@ -3432,7 +3465,14 @@ class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
     final channel = widget.selectedChannel ?? '';
     final emotes = widget.emoteManager.channelNonTwitchEmotes(channel);
     if (emotes.isEmpty) {
-      return const Center(child: Text('No channel emotes'));
+      return scrollController != null
+          ? ListView(
+              controller: scrollController,
+              children: const [
+                Center(child: Text('No channel emotes')),
+              ],
+            )
+          : const Center(child: Text('No channel emotes'));
     }
     return _buildEmoteGrid(emotes, scrollController);
   }
@@ -3440,7 +3480,14 @@ class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
   Widget _buildEmoteGlobalGrid(ScrollController? scrollController) {
     final emotes = widget.emoteManager.globalEmotes();
     if (emotes.isEmpty) {
-      return const Center(child: Text('No global emotes'));
+      return scrollController != null
+          ? ListView(
+              controller: scrollController,
+              children: const [
+                Center(child: Text('No global emotes')),
+              ],
+            )
+          : const Center(child: Text('No global emotes'));
     }
     return _buildEmoteGrid(emotes, scrollController);
   }
