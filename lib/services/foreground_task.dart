@@ -1,0 +1,87 @@
+import 'dart:io';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+
+@pragma('vm:entry-point')
+void startCallback() {
+  FlutterForegroundTask.setTaskHandler(ChatTaskHandler());
+}
+
+class ChatTaskHandler extends TaskHandler {
+  @override
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {}
+
+  @override
+  void onRepeatEvent(DateTime timestamp) {}
+
+  @override
+  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {}
+}
+
+Future<void> requestForegroundPermissions() async {
+  final notificationPermission =
+      await FlutterForegroundTask.checkNotificationPermission();
+  if (notificationPermission != NotificationPermission.granted) {
+    await FlutterForegroundTask.requestNotificationPermission();
+  }
+
+  if (Platform.isAndroid) {
+    if (!await FlutterForegroundTask.isIgnoringBatteryOptimizations) {
+      await FlutterForegroundTask.requestIgnoreBatteryOptimization();
+    }
+  }
+}
+
+void initForegroundService() {
+  FlutterForegroundTask.init(
+    androidNotificationOptions: AndroidNotificationOptions(
+      channelId: 'chat_background',
+      channelName: 'Chat connection',
+      channelDescription: 'Shown while chat stays connected in the background.',
+      channelImportance: NotificationChannelImportance.LOW,
+      onlyAlertOnce: true,
+    ),
+    iosNotificationOptions: const IOSNotificationOptions(
+      showNotification: false,
+      playSound: false,
+    ),
+    foregroundTaskOptions: ForegroundTaskOptions(
+      eventAction: ForegroundTaskEventAction.nothing(),      autoRunOnBoot: false,
+      autoRunOnMyPackageReplaced: false,
+      allowWakeLock: true,
+      allowWifiLock: true,
+    ),
+  );
+}
+
+Future<ServiceRequestResult> startForegroundService(
+  List<String> channelNames,
+) async {
+  if (channelNames.isEmpty) return const ServiceRequestFailure(error: 'no channels');
+
+  final title = 'Live chat: ${channelNames.take(2).map((c) => '#$c').join(', ')}';
+  final text = channelNames.length > 2
+      ? '+${channelNames.length - 2} more'
+      : 'Connected in background';
+
+  if (await FlutterForegroundTask.isRunningService) {
+    return FlutterForegroundTask.updateService(
+      notificationTitle: title,
+      notificationText: text,
+    );
+  }
+
+  return FlutterForegroundTask.startService(
+    serviceId: 256,
+    notificationTitle: title,
+    notificationText: text,
+    notificationIcon: null,
+    callback: startCallback,
+  );
+}
+
+Future<ServiceRequestResult> stopForegroundService() async {
+  if (!(await FlutterForegroundTask.isRunningService)) {
+    return const ServiceRequestSuccess();
+  }
+  return FlutterForegroundTask.stopService();
+}

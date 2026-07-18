@@ -82,12 +82,12 @@ class _AutocompleteDropdownState extends State<AutocompleteDropdown> {
               switch (suggestion) {
                 UserSuggestion() => Icon(
                     Icons.person,
-                    size: 20,
+                    size: 22,
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 EmoteSuggestion() => ConstrainedBox(
                     constraints: const BoxConstraints(
-                      maxHeight: 28,
+                      maxHeight: 32,
                       maxWidth: 80,
                     ),
                     child: CachedNetworkImage(
@@ -104,7 +104,7 @@ class _AutocompleteDropdownState extends State<AutocompleteDropdown> {
               Expanded(
                 child: Text(
                   suggestion.displayText,
-                  style: const TextStyle(fontSize: 14),
+                  style: const TextStyle(fontSize: 16),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),

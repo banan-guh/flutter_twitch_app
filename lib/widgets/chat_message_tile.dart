@@ -52,8 +52,9 @@ class ChatMessageTile extends StatelessWidget {
               TextSpan(
                 children: [
                   WidgetSpan(
+                    alignment: PlaceholderAlignment.middle,
                     child: SizedBox(
-                      width: 49,
+                      width: timestampFontSize * 3.5,
                       child: Padding(
                         padding: const EdgeInsets.only(right: 4),
                         child: Text(

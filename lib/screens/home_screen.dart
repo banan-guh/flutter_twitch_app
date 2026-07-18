@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
@@ -26,6 +27,7 @@ import '../services/user_store.dart';
 import '../services/suggestion.dart';
 import '../widgets/autocomplete_dropdown.dart';
 import '../util/text_bypass.dart';
+import '../services/foreground_task.dart';
 
 enum OverlayPanel { closed, thread, mentions, emotes }
 
@@ -53,7 +55,8 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen>
+    with WidgetsBindingObserver {
   static const _mentionsChannel = '@mentions';
 
   late final _eventSub = widget.eventSubService ?? EventSubService();
@@ -89,7 +92,6 @@ class _HomeScreenState extends State<HomeScreen> {
   TwitchMessage? _openThreadRoot;
   OverlayPanel _activePanel = OverlayPanel.closed;
   int _maxMessagesPerChannel = 200;
-  double _uiScale = 1.0;
 
   List<Suggestion> _suggestions = [];
 
@@ -162,7 +164,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     _chatVersion.addListener(_onPanelDataChanged);
     _loadMaxMessages();
-    _loadUiScale();
     _loadChannels();
     _connect();
     _emoteManager.accessToken = widget.twitchAuth.accessToken;
@@ -172,6 +173,23 @@ class _HomeScreenState extends State<HomeScreen> {
     widget.twitchAuth.addListener(_onAuthChanged);
     _focusNode.addListener(_onInputFocusChanged);
     _messageController.addListener(_onInputChanged);
+    WidgetsBinding.instance.addObserver(this);
+    _initForegroundService();
+  }
+
+  Future<void> _initForegroundService() async {
+    initForegroundService();
+    await requestForegroundPermissions();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!Platform.isAndroid) return;
+    if (state == AppLifecycleState.paused) {
+      startForegroundService(List.of(_channels));
+    } else if (state == AppLifecycleState.resumed) {
+      stopForegroundService();
+    }
   }
 
   Future<void> _saveChannels() async {
@@ -393,16 +411,9 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  void _loadUiScale() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (!mounted) return;
-    setState(() {
-      _uiScale = prefs.getDouble('ui_scale') ?? 1.0;
-    });
-  }
-
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _messageSub?.cancel();
     _statusSub?.cancel();
     _deleteSub?.cancel();
@@ -2044,7 +2055,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                         child: _ThreadPanelWidget(
                                           key: const ValueKey('thread_panel'),
                                           data: _threadPanelData,
-                                          uiScale: _uiScale,
+                                          uiScale: 1.0,
                                           onClose: _closePanel,
                                           onLongPress: _showThreadMessageMenu,
                                           buildBadgeSpans: _buildBadgeSpans,
@@ -2090,7 +2101,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                         child: _MentionsPanelWidget(
                                           key: const ValueKey('mentions_panel'),
                                           messages: _mentionsPanelData,
-                                          uiScale: _uiScale,
+                                          uiScale: 1.0,
                                           onClose: _closePanel,
                                           buildBadgeSpans: _buildBadgeSpans,
                                           buildMessageSpans: _buildMessageSpans,
@@ -2138,7 +2149,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                         child: _EmoteMenuPanelWidget(
                                           key: const ValueKey('emote_panel'),
                                           isActive: _activePanel == OverlayPanel.emotes,
-                                          uiScale: _uiScale,
+                                          uiScale: 1.0,
                                           selectedChannel: _selectedChannel,
                                           onEmoteSelected: _onEmoteSelected,
                                           onClose: _closePanel,
@@ -2392,7 +2403,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final msgs = _frozenSnapshot[channel] ?? _messages(channel);
     final surface = Theme.of(context).colorScheme.surface;
     final systemScale = MediaQuery.textScalerOf(context).scale(1.0);
-    final s = _uiScale * systemScale;
+    final s = 1.0 * systemScale;
     final atBottom = _isAtBottom[channel] ?? true;
 
     if (msgs.isEmpty) {
