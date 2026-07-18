@@ -17,7 +17,6 @@ import '../services/twitch_badge_service.dart';
 import '../widgets/settings.dart';
 import '../widgets/emote_text.dart';
 import '../widgets/chat_message_tile.dart';
-import '../widgets/slide_panel.dart';
 import '../widgets/tabbed_layout.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../color_utils.dart';
@@ -48,7 +47,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
+class _HomeScreenState extends State<HomeScreen> {
   static const _mentionsChannel = '@mentions';
 
   late final _eventSub = widget.eventSubService ?? EventSubService();
@@ -84,9 +83,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   int _maxMessagesPerChannel = 200;
   double _uiScale = 1.0;
 
-  late final AnimationController _threadAnimCtrl;
-  late final AnimationController _mentionsAnimCtrl;
-  late final AnimationController _emoteAnimCtrl;
+  late final DraggableScrollableController _threadSheetCtrl;
+  late final DraggableScrollableController _mentionsSheetCtrl;
+  late final DraggableScrollableController _emoteSheetCtrl;
+  static const _sheetAnimDuration = Duration(milliseconds: 250);
+  static const _sheetCloseDuration = Duration(milliseconds: 180);
+  static const _emoteMaxFraction = 0.55;
+  static const _fullHeightFraction = 1.0;
   final _threadPanelData = ValueNotifier<_ThreadPanelData?>(null);
   final _mentionsPanelData = ValueNotifier<List<TwitchMessage>?>(null);
 
@@ -112,21 +115,36 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   bool _wasDisconnected = false;
   EventSubStatus _connectionStatus = EventSubStatus.disconnected;
 
+  void _onSheetSizeChanged(OverlayPanel panel, DraggableScrollableController ctrl) {
+    // When the user drags a sheet down to size 0, close the panel.
+    if (_activePanel == panel && ctrl.isAttached && ctrl.size <= 0.001) {
+      setState(() {
+        _activePanel = OverlayPanel.closed;
+        if (panel == OverlayPanel.thread) {
+          _openThreadRoot = null;
+          _threadPanelData.value = null;
+        } else if (panel == OverlayPanel.mentions) {
+          _mentionsPanelData.value = null;
+        }
+      });
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     _currentUserLogin = widget.initialCurrentUserLogin;
-    _threadAnimCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 250),
+    _threadSheetCtrl = DraggableScrollableController();
+    _threadSheetCtrl.addListener(
+      () => _onSheetSizeChanged(OverlayPanel.thread, _threadSheetCtrl),
     );
-    _mentionsAnimCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 250),
+    _mentionsSheetCtrl = DraggableScrollableController();
+    _mentionsSheetCtrl.addListener(
+      () => _onSheetSizeChanged(OverlayPanel.mentions, _mentionsSheetCtrl),
     );
-    _emoteAnimCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 250),
+    _emoteSheetCtrl = DraggableScrollableController();
+    _emoteSheetCtrl.addListener(
+      () => _onSheetSizeChanged(OverlayPanel.emotes, _emoteSheetCtrl),
     );
     _chatVersion.addListener(_onPanelDataChanged);
     _loadMaxMessages();
@@ -293,9 +311,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _ircNoticeSub?.cancel();
     _ircJtvSub?.cancel();
     _chatVersion.removeListener(_onPanelDataChanged);
-    _threadAnimCtrl.dispose();
-    _mentionsAnimCtrl.dispose();
-    _emoteAnimCtrl.dispose();
+    _threadSheetCtrl.dispose();
+    _mentionsSheetCtrl.dispose();
+    _emoteSheetCtrl.dispose();
     _threadPanelData.dispose();
     _mentionsPanelData.dispose();
     for (final c in _scrollControllers.values) {
@@ -1399,9 +1417,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return current;
   }
 
-  void _showThreadView(TwitchMessage rootMsg) {
+  Future<void> _showThreadView(TwitchMessage rootMsg) async {
     final channel = rootMsg.channel;
     if (channel == null) return;
+    if (_activePanel != OverlayPanel.closed) await _closePanel();
     if (_selectedChannel != channel) {
       final idx = _channels.indexOf(channel);
       if (idx >= 0) _onChannelChanged(idx);
@@ -1415,21 +1434,47 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       messages: _computeThreadMessages(),
       channel: channel,
     );
-    _threadAnimCtrl.forward(from: 0);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _threadSheetCtrl.isAttached) {
+        _threadSheetCtrl.animateTo(
+          _fullHeightFraction,
+          duration: _sheetAnimDuration,
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
-  void _showMentionsView() {
+  Future<void> _showMentionsView() async {
+    if (_activePanel != OverlayPanel.closed) await _closePanel();
     setState(() {
       _activePanel = OverlayPanel.mentions;
       _openThreadRoot = null;
     });
     _mentionsPanelData.value = _channelMessages[_mentionsChannel] ?? [];
-    _mentionsAnimCtrl.forward(from: 0);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _mentionsSheetCtrl.isAttached) {
+        _mentionsSheetCtrl.animateTo(
+          _fullHeightFraction,
+          duration: _sheetAnimDuration,
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
-  void _showEmoteMenu() {
+  Future<void> _showEmoteMenu() async {
+    if (_activePanel != OverlayPanel.closed) await _closePanel();
     setState(() => _activePanel = OverlayPanel.emotes);
-    _emoteAnimCtrl.forward(from: 0);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _emoteSheetCtrl.isAttached) {
+        _emoteSheetCtrl.animateTo(
+          _emoteMaxFraction,
+          duration: _sheetAnimDuration,
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
   void _onEmoteSelected(GenericEmote emote) {
@@ -1444,28 +1489,29 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _emoteManager.markEmoteUsed(emote);
   }
 
-  void _closePanel() {
-    final ctrl = switch (_activePanel) {
-      OverlayPanel.thread => _threadAnimCtrl,
-      OverlayPanel.mentions => _mentionsAnimCtrl,
-      OverlayPanel.emotes => _emoteAnimCtrl,
+  Future<void> _closePanel() async {
+    final panelToClose = _activePanel;
+    if (panelToClose == OverlayPanel.closed) return;
+    final ctrl = switch (panelToClose) {
+      OverlayPanel.thread => _threadSheetCtrl,
+      OverlayPanel.mentions => _mentionsSheetCtrl,
+      OverlayPanel.emotes => _emoteSheetCtrl,
       OverlayPanel.closed => null,
     };
-    if (ctrl == null) return;
-    ctrl
-        .animateTo(
-          0.0,
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOut,
-        )
-        .then((_) {
-          if (mounted) {
-            setState(() {
-              _activePanel = OverlayPanel.closed;
-              _openThreadRoot = null;
-            });
-          }
-        });
+    if (ctrl == null || !ctrl.isAttached) return;
+    await ctrl.animateTo(
+      0.0,
+      duration: _sheetCloseDuration,
+      curve: Curves.easeOut,
+    );
+    if (mounted) {
+      setState(() {
+        _activePanel = OverlayPanel.closed;
+        _openThreadRoot = null;
+        _threadPanelData.value = null;
+        _mentionsPanelData.value = null;
+      });
+    }
   }
 
   List<TwitchMessage> _computeThreadMessages() {
@@ -1548,9 +1594,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       }
       _openThreadRoot = null;
     });
-    _threadAnimCtrl.stop();
-    _mentionsAnimCtrl.stop();
-    _emoteAnimCtrl.stop();
+    // Close any open sheet.
+    _closePanel();
   }
 
   List<TwitchMessage> _messages(String channel) {
@@ -1604,14 +1649,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           children: [
             Expanded(
               child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final fullHeight = constraints.maxHeight;
+                builder: (context, _) {
                   final keyboardH = MediaQuery.of(context).viewInsets.bottom;
                   final statusBarH = MediaQuery.of(context).padding.top;
-                  final emoteH = keyboardH > 0
-                      ? fullHeight
-                      : (fullHeight * 0.55).clamp(150.0, fullHeight);
-                  final emoteTop = keyboardH > 0 ? 0.0 : fullHeight - emoteH;
                   return Stack(
                     clipBehavior: Clip.hardEdge,
                     children: [
@@ -1736,61 +1776,106 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           ),
                         ],
                       ),
-                      if (_activePanel == OverlayPanel.thread)
-                        SlidePanel(
-                          animation: _threadAnimCtrl,
-                          stackHeight: fullHeight,
-                          top: statusBarH,
-                          child: RepaintBoundary(
-                            child: _ThreadPanelWidget(
-                              key: const ValueKey('thread_panel'),
-                              controller: _threadAnimCtrl,
-                              panelHeight: fullHeight - statusBarH,
-                              data: _threadPanelData,
-                              uiScale: _uiScale,
-                              onClose: _closePanel,
-                              onLongPress: _showThreadMessageMenu,
-                              buildBadgeSpans: _buildBadgeSpans,
-                              buildMessageSpans: _buildMessageSpans,
-                            ),
-                          ),
+                      // Thread sheet — always mounted, full height below status bar.
+                      Positioned(
+                        top: statusBarH,
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        child: DraggableScrollableSheet(
+                          controller: _threadSheetCtrl,
+                          initialChildSize: 0,
+                          minChildSize: 0,
+                          maxChildSize: _fullHeightFraction,
+                          snap: true,
+                          builder: (context, scrollController) {
+                            final sheetTheme = Theme.of(context);
+                            return RepaintBoundary(
+                              child: Material(
+                                color: sheetTheme.scaffoldBackgroundColor,
+                                child: _ThreadPanelWidget(
+                                  key: const ValueKey('thread_panel'),
+                                  data: _threadPanelData,
+                                  uiScale: _uiScale,
+                                  onClose: _closePanel,
+                                  onLongPress: _showThreadMessageMenu,
+                                  buildBadgeSpans: _buildBadgeSpans,
+                                  buildMessageSpans: _buildMessageSpans,
+                                  scrollController: scrollController,
+                                ),
+                              ),
+                            );
+                          },
                         ),
-                      if (_activePanel == OverlayPanel.mentions)
-                        SlidePanel(
-                          animation: _mentionsAnimCtrl,
-                          stackHeight: fullHeight,
-                          top: statusBarH,
-                          child: RepaintBoundary(
-                            child: _MentionsPanelWidget(
-                              key: const ValueKey('mentions_panel'),
-                              controller: _mentionsAnimCtrl,
-                              panelHeight: fullHeight - statusBarH,
-                              messages: _mentionsPanelData,
-                              uiScale: _uiScale,
-                              onClose: _closePanel,
-                              buildBadgeSpans: _buildBadgeSpans,
-                              buildMessageSpans: _buildMessageSpans,
-                            ),
-                          ),
+                      ),
+                      // Mentions sheet — always mounted, full height below
+                      // status bar.
+                      Positioned(
+                        top: statusBarH,
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        child: DraggableScrollableSheet(
+                          controller: _mentionsSheetCtrl,
+                          initialChildSize: 0,
+                          minChildSize: 0,
+                          maxChildSize: _fullHeightFraction,
+                          snap: true,
+                          builder: (context, scrollController) {
+                            final sheetTheme = Theme.of(context);
+                            return RepaintBoundary(
+                              child: Material(
+                                color: sheetTheme.scaffoldBackgroundColor,
+                                child: _MentionsPanelWidget(
+                                  key: const ValueKey('mentions_panel'),
+                                  messages: _mentionsPanelData,
+                                  uiScale: _uiScale,
+                                  onClose: _closePanel,
+                                  buildBadgeSpans: _buildBadgeSpans,
+                                  buildMessageSpans: _buildMessageSpans,
+                                  scrollController: scrollController,
+                                ),
+                              ),
+                            );
+                          },
                         ),
-                      if (_activePanel == OverlayPanel.emotes)
-                        SlidePanel(
-                          animation: _emoteAnimCtrl,
-                          stackHeight: fullHeight,
-                          top: emoteTop,
-                          child: RepaintBoundary(
-                            child: _EmoteMenuPanelWidget(
-                              key: const ValueKey('emote_panel'),
-                              controller: _emoteAnimCtrl,
-                              panelHeight: emoteH,
-                              uiScale: _uiScale,
-                              selectedChannel: _selectedChannel,
-                              onEmoteSelected: _onEmoteSelected,
-                              onClose: _closePanel,
-                              emoteManager: _emoteManager,
-                            ),
-                          ),
+                      ),
+                      // Emote sheet — always mounted, 55% or full (keyboard).
+                      Positioned(
+                        top: statusBarH,
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        child: DraggableScrollableSheet(
+                          controller: _emoteSheetCtrl,
+                          initialChildSize: 0,
+                          minChildSize: 0,
+                          maxChildSize:
+                              keyboardH > 0
+                              ? _fullHeightFraction
+                              : _emoteMaxFraction,
+                          snap: true,
+                          builder: (context, scrollController) {
+                            final sheetTheme = Theme.of(context);
+                            return RepaintBoundary(
+                              child: Material(
+                                color: sheetTheme.scaffoldBackgroundColor,
+                                child: _EmoteMenuPanelWidget(
+                                  key: const ValueKey('emote_panel'),
+                                  isActive: _activePanel == OverlayPanel.emotes,
+                                  uiScale: _uiScale,
+                                  selectedChannel: _selectedChannel,
+                                  onEmoteSelected: _onEmoteSelected,
+                                  onClose: _closePanel,
+                                  emoteManager: _emoteManager,
+                                  scrollController: scrollController,
+                                  sheetCtrl: _emoteSheetCtrl,
+                                ),
+                              ),
+                            );
+                          },
                         ),
+                      ),
                     ],
                   );
                 },
@@ -2643,142 +2728,6 @@ class _EmoteSheet extends StatelessWidget {
   }
 }
 
-class _DragHandle extends StatelessWidget {
-  final AnimationController controller;
-  final double panelHeight;
-  final Widget? header;
-  final VoidCallback onClose;
-  final EdgeInsetsGeometry barPadding;
-
-  const _DragHandle({
-    required this.controller,
-    required this.panelHeight,
-    this.header,
-    required this.onClose,
-    this.barPadding = const EdgeInsets.only(top: 8, bottom: 8),
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onVerticalDragUpdate: (details) {
-        final newValue =
-            (controller.value - details.primaryDelta! / panelHeight).clamp(
-              0.0,
-              1.0,
-            );
-        controller.value = newValue;
-      },
-      onVerticalDragEnd: (details) {
-        if (controller.value < 0.5 || (details.primaryVelocity ?? 0) < -200) {
-          onClose();
-        } else {
-          controller.animateTo(
-            1.0,
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOut,
-          );
-        }
-      },
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: barPadding,
-            child: const Center(
-              child: SizedBox(
-                width: 32,
-                height: 4,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: Colors.grey,
-                    borderRadius: BorderRadius.all(Radius.circular(2)),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          if (header != null) header!,
-        ],
-      ),
-    );
-  }
-}
-
-class _PanelDragListener extends StatefulWidget {
-  final AnimationController controller;
-  final double panelHeight;
-  final ScrollController scrollController;
-  final VoidCallback onClose;
-  final Widget child;
-
-  const _PanelDragListener({
-    required this.controller,
-    required this.panelHeight,
-    required this.scrollController,
-    required this.onClose,
-    required this.child,
-  });
-
-  @override
-  State<_PanelDragListener> createState() => _PanelDragListenerState();
-}
-
-class _PanelDragListenerState extends State<_PanelDragListener> {
-  double _dragDy = 0;
-  bool _dragging = false;
-
-  void _onPointerDown(PointerDownEvent _) {
-    _dragging = true;
-    _dragDy = 0;
-  }
-
-  void _onPointerMove(PointerMoveEvent event) {
-    if (!_dragging) return;
-    _dragDy += event.delta.dy;
-    if (_dragDy > 0 &&
-        widget.scrollController.hasClients &&
-        widget.scrollController.position.pixels >=
-            widget.scrollController.position.maxScrollExtent - 0.5) {
-      widget.controller.value =
-          (widget.controller.value - event.delta.dy / widget.panelHeight).clamp(
-            0.0,
-            1.0,
-          );
-    }
-  }
-
-  void _onPointerUp(PointerUpEvent _) {
-    if (!_dragging) return;
-    _dragging = false;
-    if (widget.controller.value < 0.5 || _dragDy > widget.panelHeight * 0.3) {
-      widget.onClose();
-    } else {
-      widget.controller.animateTo(
-        1.0,
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOut,
-      );
-    }
-  }
-
-  void _onPointerCancel(PointerCancelEvent _) {
-    _dragging = false;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Listener(
-      onPointerDown: _onPointerDown,
-      onPointerMove: _onPointerMove,
-      onPointerUp: _onPointerUp,
-      onPointerCancel: _onPointerCancel,
-      child: widget.child,
-    );
-  }
-}
-
 class _MessageInput extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
@@ -2929,8 +2878,7 @@ class _ThreadPanelData {
 }
 
 class _ThreadPanelWidget extends StatefulWidget {
-  final AnimationController controller;
-  final double panelHeight;
+  final ScrollController scrollController;
   final ValueListenable<_ThreadPanelData?> data;
   final double uiScale;
   final VoidCallback onClose;
@@ -2947,8 +2895,7 @@ class _ThreadPanelWidget extends StatefulWidget {
   buildMessageSpans;
 
   const _ThreadPanelWidget({
-    required this.controller,
-    required this.panelHeight,
+    required this.scrollController,
     required this.data,
     required this.uiScale,
     required this.onClose,
@@ -2963,14 +2910,6 @@ class _ThreadPanelWidget extends StatefulWidget {
 }
 
 class _ThreadPanelWidgetState extends State<_ThreadPanelWidget> {
-  late final ScrollController _scrollCtrl = ScrollController();
-
-  @override
-  void dispose() {
-    _scrollCtrl.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<_ThreadPanelData?>(
@@ -2987,37 +2926,33 @@ class _ThreadPanelWidgetState extends State<_ThreadPanelWidget> {
 
         return Material(
           color: theme.scaffoldBackgroundColor,
+          clipBehavior: Clip.hardEdge,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _DragHandle(
-                controller: widget.controller,
-                panelHeight: widget.panelHeight,
-                onClose: widget.onClose,
-                header: Material(
-                  elevation: 2,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Row(
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.close),
-                          tooltip: 'Close reply thread',
-                          onPressed: widget.onClose,
-                        ),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(
-                            'Reply Thread',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: theme.colorScheme.onSurface,
-                            ),
+              Material(
+                elevation: 2,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        tooltip: 'Close reply thread',
+                        onPressed: widget.onClose,
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          'Reply Thread',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: theme.colorScheme.onSurface,
                           ),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -3025,98 +2960,92 @@ class _ThreadPanelWidgetState extends State<_ThreadPanelWidget> {
               Expanded(
                 child: threadMsgs.isEmpty
                     ? const Center(child: Text('No messages found'))
-                    : _PanelDragListener(
-                        controller: widget.controller,
-                        panelHeight: widget.panelHeight,
-                        scrollController: _scrollCtrl,
-                        onClose: widget.onClose,
-                        child: ListView.builder(
-                          controller: _scrollCtrl,
-                          physics: const ClampingScrollPhysics(),
-                          reverse: true,
-                          padding: const EdgeInsets.only(bottom: 8),
-                          itemCount: threadMsgs.length,
-                          itemBuilder: (_, i) {
-                            final msg = threadMsgs[threadMsgs.length - 1 - i];
-                            final ts =
-                                '${msg.timestamp.toLocal().hour.toString().padLeft(2, '0')}:${msg.timestamp.toLocal().minute.toString().padLeft(2, '0')}';
+                    : ListView.builder(
+                        controller: widget.scrollController,
+                        physics: const ClampingScrollPhysics(),
+                        reverse: true,
+                        padding: const EdgeInsets.only(bottom: 8),
+                        itemCount: threadMsgs.length,
+                        itemBuilder: (_, i) {
+                          final msg = threadMsgs[threadMsgs.length - 1 - i];
+                          final ts =
+                              '${msg.timestamp.toLocal().hour.toString().padLeft(2, '0')}:${msg.timestamp.toLocal().minute.toString().padLeft(2, '0')}';
 
-                            if (msg.isSystem) {
-                              return ChatMessageTile(
-                                timestamp: ts,
-                                isHistory: msg.isHistory,
-                                children: [TextSpan(text: msg.text)],
-                                timestampFontSize: 13 * s,
-                                bodyFontSize: 13 * s,
-                                bodyColor: msg.bodyColor,
-                                semanticsLabel: msg.text,
-                              );
-                            }
-
+                          if (msg.isSystem) {
                             return ChatMessageTile(
                               timestamp: ts,
-                              deleted: msg.deleted,
                               isHistory: msg.isHistory,
+                              children: [TextSpan(text: msg.text)],
+                              timestampFontSize: 13 * s,
+                              bodyFontSize: 13 * s,
                               bodyColor: msg.bodyColor,
-                              bodyFontSize: 14 * s,
-                              timestampFontSize: 14 * s,
-                              children: [
-                                if (msg.isAction) ...[
-                                  ...widget.buildBadgeSpans(
-                                    data.channel,
-                                    msg,
-                                    badgeScale: s,
-                                  ),
-                                  TextSpan(
-                                    text: '${msg.username} ',
-                                    style: TextStyle(
-                                      fontSize: 14 * s,
-                                      fontWeight: FontWeight.w600,
-                                      color: parseColor(
-                                        msg.color,
-                                        background: surface,
-                                      ),
-                                    ),
-                                  ),
-                                  ...widget.buildMessageSpans(
-                                    msg,
-                                    data.channel,
-                                    surface,
-                                    colored: true,
-                                    textScale: s,
-                                  ),
-                                ] else ...[
-                                  ...widget.buildBadgeSpans(
-                                    data.channel,
-                                    msg,
-                                    badgeScale: s,
-                                  ),
-                                  TextSpan(
-                                    text: '${msg.username}: ',
-                                    style: TextStyle(
-                                      fontSize: 14 * s,
-                                      fontWeight: FontWeight.w600,
-                                      color: parseColor(
-                                        msg.color,
-                                        background: surface,
-                                      ),
-                                    ),
-                                  ),
-                                  ...widget.buildMessageSpans(
-                                    msg,
-                                    data.channel,
-                                    surface,
-                                    textScale: s,
-                                  ),
-                                ],
-                              ],
-                              onLongPress: () => widget.onLongPress(msg),
-                              semanticsLabel: msg.isHighlighted
-                                  ? 'Mention: $ts ${msg.username}: ${msg.text}'
-                                  : '$ts ${msg.username}: ${msg.text}',
+                              semanticsLabel: msg.text,
                             );
-                          },
-                        ),
+                          }
+
+                          return ChatMessageTile(
+                            timestamp: ts,
+                            deleted: msg.deleted,
+                            isHistory: msg.isHistory,
+                            bodyColor: msg.bodyColor,
+                            bodyFontSize: 14 * s,
+                            timestampFontSize: 14 * s,
+                            children: [
+                              if (msg.isAction) ...[
+                                ...widget.buildBadgeSpans(
+                                  data.channel,
+                                  msg,
+                                  badgeScale: s,
+                                ),
+                                TextSpan(
+                                  text: '${msg.username} ',
+                                  style: TextStyle(
+                                    fontSize: 14 * s,
+                                    fontWeight: FontWeight.w600,
+                                    color: parseColor(
+                                      msg.color,
+                                      background: surface,
+                                    ),
+                                  ),
+                                ),
+                                ...widget.buildMessageSpans(
+                                  msg,
+                                  data.channel,
+                                  surface,
+                                  colored: true,
+                                  textScale: s,
+                                ),
+                              ] else ...[
+                                ...widget.buildBadgeSpans(
+                                  data.channel,
+                                  msg,
+                                  badgeScale: s,
+                                ),
+                                TextSpan(
+                                  text: '${msg.username}: ',
+                                  style: TextStyle(
+                                    fontSize: 14 * s,
+                                    fontWeight: FontWeight.w600,
+                                    color: parseColor(
+                                      msg.color,
+                                      background: surface,
+                                    ),
+                                  ),
+                                ),
+                                ...widget.buildMessageSpans(
+                                  msg,
+                                  data.channel,
+                                  surface,
+                                  textScale: s,
+                                ),
+                              ],
+                            ],
+                            onLongPress: () => widget.onLongPress(msg),
+                            semanticsLabel: msg.isHighlighted
+                                ? 'Mention: $ts ${msg.username}: ${msg.text}'
+                                : '$ts ${msg.username}: ${msg.text}',
+                          );
+                        },
                       ),
               ),
             ],
@@ -3128,8 +3057,7 @@ class _ThreadPanelWidgetState extends State<_ThreadPanelWidget> {
 }
 
 class _MentionsPanelWidget extends StatefulWidget {
-  final AnimationController controller;
-  final double panelHeight;
+  final ScrollController scrollController;
   final ValueListenable<List<TwitchMessage>?> messages;
   final double uiScale;
   final VoidCallback onClose;
@@ -3145,8 +3073,7 @@ class _MentionsPanelWidget extends StatefulWidget {
   buildMessageSpans;
 
   const _MentionsPanelWidget({
-    required this.controller,
-    required this.panelHeight,
+    required this.scrollController,
     required this.messages,
     required this.uiScale,
     required this.onClose,
@@ -3160,14 +3087,6 @@ class _MentionsPanelWidget extends StatefulWidget {
 }
 
 class _MentionsPanelWidgetState extends State<_MentionsPanelWidget> {
-  late final ScrollController _scrollCtrl = ScrollController();
-
-  @override
-  void dispose() {
-    _scrollCtrl.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<List<TwitchMessage>?>(
@@ -3180,39 +3099,37 @@ class _MentionsPanelWidgetState extends State<_MentionsPanelWidget> {
 
         final messageList = msgs ?? [];
 
+        if (msgs == null) return const SizedBox.shrink();
+
         return Material(
           color: theme.scaffoldBackgroundColor,
+          clipBehavior: Clip.hardEdge,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _DragHandle(
-                controller: widget.controller,
-                panelHeight: widget.panelHeight,
-                onClose: widget.onClose,
-                header: Material(
-                  elevation: 2,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Row(
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.arrow_back),
-                          tooltip: 'Back',
-                          onPressed: widget.onClose,
-                        ),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(
-                            'Mentions / Whispers',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: theme.colorScheme.onSurface,
-                            ),
+              Material(
+                elevation: 2,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back),
+                        tooltip: 'Back',
+                        onPressed: widget.onClose,
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          'Mentions / Whispers',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: theme.colorScheme.onSurface,
                           ),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -3220,99 +3137,93 @@ class _MentionsPanelWidgetState extends State<_MentionsPanelWidget> {
               Expanded(
                 child: messageList.isEmpty
                     ? const Center(child: Text('No mentions or whispers'))
-                    : _PanelDragListener(
-                        controller: widget.controller,
-                        panelHeight: widget.panelHeight,
-                        scrollController: _scrollCtrl,
-                        onClose: widget.onClose,
-                        child: ListView.builder(
-                          controller: _scrollCtrl,
-                          physics: const ClampingScrollPhysics(),
-                          reverse: true,
-                          padding: const EdgeInsets.only(bottom: 8),
-                          itemCount: messageList.length,
-                          itemBuilder: (_, i) {
-                            final msg = messageList[messageList.length - 1 - i];
-                            final ts =
-                                '${msg.timestamp.toLocal().hour.toString().padLeft(2, '0')}:${msg.timestamp.toLocal().minute.toString().padLeft(2, '0')}';
+                    : ListView.builder(
+                        controller: widget.scrollController,
+                        physics: const ClampingScrollPhysics(),
+                        reverse: true,
+                        padding: const EdgeInsets.only(bottom: 8),
+                        itemCount: messageList.length,
+                        itemBuilder: (_, i) {
+                          final msg = messageList[messageList.length - 1 - i];
+                          final ts =
+                              '${msg.timestamp.toLocal().hour.toString().padLeft(2, '0')}:${msg.timestamp.toLocal().minute.toString().padLeft(2, '0')}';
 
-                            if (msg.isSystem) {
-                              return ChatMessageTile(
-                                timestamp: ts,
-                                isHistory: msg.isHistory,
-                                children: [TextSpan(text: msg.text)],
-                                timestampFontSize: 13 * s,
-                                bodyFontSize: 13 * s,
-                                bodyColor: msg.bodyColor,
-                                semanticsLabel: msg.text,
-                              );
-                            }
-
-                            final channel = msg.channel ?? '';
-
+                          if (msg.isSystem) {
                             return ChatMessageTile(
                               timestamp: ts,
-                              deleted: msg.deleted,
                               isHistory: msg.isHistory,
+                              children: [TextSpan(text: msg.text)],
+                              timestampFontSize: 13 * s,
+                              bodyFontSize: 13 * s,
                               bodyColor: msg.bodyColor,
-                              bodyFontSize: 14 * s,
-                              timestampFontSize: 14 * s,
-                              children: [
-                                if (msg.isAction) ...[
-                                  ...widget.buildBadgeSpans(
-                                    channel,
-                                    msg,
-                                    badgeScale: s,
-                                  ),
-                                  TextSpan(
-                                    text: '${msg.username} ',
-                                    style: TextStyle(
-                                      fontSize: 14 * s,
-                                      fontWeight: FontWeight.w600,
-                                      color: parseColor(
-                                        msg.color,
-                                        background: surface,
-                                      ),
-                                    ),
-                                  ),
-                                  ...widget.buildMessageSpans(
-                                    msg,
-                                    channel,
-                                    surface,
-                                    colored: true,
-                                    textScale: s,
-                                  ),
-                                ] else ...[
-                                  ...widget.buildBadgeSpans(
-                                    channel,
-                                    msg,
-                                    badgeScale: s,
-                                  ),
-                                  TextSpan(
-                                    text: '${msg.username}: ',
-                                    style: TextStyle(
-                                      fontSize: 14 * s,
-                                      fontWeight: FontWeight.w600,
-                                      color: parseColor(
-                                        msg.color,
-                                        background: surface,
-                                      ),
-                                    ),
-                                  ),
-                                  ...widget.buildMessageSpans(
-                                    msg,
-                                    channel,
-                                    surface,
-                                    textScale: s,
-                                  ),
-                                ],
-                              ],
-                              semanticsLabel: msg.isHighlighted
-                                  ? 'Mention: $ts ${msg.username}: ${msg.text}'
-                                  : '$ts ${msg.username}: ${msg.text}',
+                              semanticsLabel: msg.text,
                             );
-                          },
-                        ),
+                          }
+
+                          final channel = msg.channel ?? '';
+
+                          return ChatMessageTile(
+                            timestamp: ts,
+                            deleted: msg.deleted,
+                            isHistory: msg.isHistory,
+                            bodyColor: msg.bodyColor,
+                            bodyFontSize: 14 * s,
+                            timestampFontSize: 14 * s,
+                            children: [
+                              if (msg.isAction) ...[
+                                ...widget.buildBadgeSpans(
+                                  channel,
+                                  msg,
+                                  badgeScale: s,
+                                ),
+                                TextSpan(
+                                  text: '${msg.username} ',
+                                  style: TextStyle(
+                                    fontSize: 14 * s,
+                                    fontWeight: FontWeight.w600,
+                                    color: parseColor(
+                                      msg.color,
+                                      background: surface,
+                                    ),
+                                  ),
+                                ),
+                                ...widget.buildMessageSpans(
+                                  msg,
+                                  channel,
+                                  surface,
+                                  colored: true,
+                                  textScale: s,
+                                ),
+                              ] else ...[
+                                ...widget.buildBadgeSpans(
+                                  channel,
+                                  msg,
+                                  badgeScale: s,
+                                ),
+                                TextSpan(
+                                  text: '${msg.username}: ',
+                                  style: TextStyle(
+                                    fontSize: 14 * s,
+                                    fontWeight: FontWeight.w600,
+                                    color: parseColor(
+                                      msg.color,
+                                      background: surface,
+                                    ),
+                                  ),
+                                ),
+                                ...widget.buildMessageSpans(
+                                  msg,
+                                  channel,
+                                  surface,
+                                  textScale: s,
+                                ),
+                              ],
+                            ],
+                            semanticsLabel: msg.isHighlighted
+                                ? 'Mention: $ts ${msg.username}: ${msg.text}'
+                                : '$ts ${msg.username}: ${msg.text}',
+                          );
+                        },
                       ),
               ),
             ],
@@ -3324,17 +3235,19 @@ class _MentionsPanelWidgetState extends State<_MentionsPanelWidget> {
 }
 
 class _EmoteMenuPanelWidget extends StatefulWidget {
-  final AnimationController controller;
-  final double panelHeight;
+  final ScrollController scrollController;
+  final bool isActive;
   final double uiScale;
   final String? selectedChannel;
   final void Function(GenericEmote) onEmoteSelected;
   final VoidCallback onClose;
   final EmoteManager emoteManager;
+  final DraggableScrollableController sheetCtrl;
 
   const _EmoteMenuPanelWidget({
-    required this.controller,
-    required this.panelHeight,
+    required this.scrollController,
+    required this.isActive,
+    required this.sheetCtrl,
     required this.uiScale,
     required this.selectedChannel,
     required this.onEmoteSelected,
@@ -3370,6 +3283,7 @@ class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
 
   @override
   Widget build(BuildContext context) {
+    if (!widget.isActive) return const SizedBox.shrink();
     final theme = Theme.of(context);
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 4),
@@ -3387,11 +3301,43 @@ class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
       clipBehavior: Clip.hardEdge,
       child: Column(
         children: [
-          _DragHandle(
-            controller: widget.controller,
-            panelHeight: widget.panelHeight,
-            onClose: widget.onClose,
-            barPadding: const EdgeInsets.symmetric(vertical: 24),
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onVerticalDragUpdate: (details) {
+              final newPixels = widget.sheetCtrl.pixels - details.primaryDelta!;
+              final newSize = widget.sheetCtrl.pixelsToSize(newPixels);
+              if (widget.sheetCtrl.isAttached) {
+                widget.sheetCtrl.jumpTo(newSize);
+              }
+            },
+            onVerticalDragEnd: (details) {
+              if (!widget.sheetCtrl.isAttached) return;
+              final velocity = details.primaryVelocity ?? 0;
+              if (widget.sheetCtrl.size < 0.3 || velocity > 400) {
+                widget.onClose();
+              } else {
+                widget.sheetCtrl.animateTo(
+                  _HomeScreenState._emoteMaxFraction,
+                  duration: _HomeScreenState._sheetAnimDuration,
+                  curve: Curves.easeOut,
+                );
+              }
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Center(
+                child: SizedBox(
+                  width: 32,
+                  height: 4,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Colors.grey,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ),
           Expanded(
             child: TabbedLayout(
@@ -3399,7 +3345,10 @@ class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
               tabs: const ['Recent', 'Subs', 'Channel', 'Global'],
               selectedIndex: _emoteTabIndex,
               onSelectedIndexChanged: (i) => setState(() => _emoteTabIndex = i),
-              pageBuilder: (_, i) => _buildEmoteTabPage(i),
+              pageBuilder: (_, i) => _buildEmoteTabPage(
+                i,
+                i == _emoteTabIndex ? widget.scrollController : null,
+              ),
             ),
           ),
         ],
@@ -3407,37 +3356,38 @@ class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
     );
   }
 
-  Widget _buildEmoteTabPage(int tabIndex) {
+  Widget _buildEmoteTabPage(int tabIndex, ScrollController? scrollController) {
     switch (tabIndex) {
       case 0:
-        return _buildEmoteRecentGrid();
+        return _buildEmoteRecentGrid(scrollController);
       case 1:
-        return _buildEmoteSubsGrid();
+        return _buildEmoteSubsGrid(scrollController);
       case 2:
-        return _buildEmoteChannelGrid();
+        return _buildEmoteChannelGrid(scrollController);
       case 3:
-        return _buildEmoteGlobalGrid();
+        return _buildEmoteGlobalGrid(scrollController);
       default:
         return const SizedBox();
     }
   }
 
-  Widget _buildEmoteRecentGrid() {
+  Widget _buildEmoteRecentGrid(ScrollController? scrollController) {
     if (!_recentEmotesLoaded) {
       return const Center(child: CircularProgressIndicator(strokeWidth: 2));
     }
     if (_cachedRecentEmotes.isEmpty) {
       return const Center(child: Text('No recently used emotes'));
     }
-    return _buildEmoteGrid(_cachedRecentEmotes);
+    return _buildEmoteGrid(_cachedRecentEmotes, scrollController);
   }
 
-  Widget _buildEmoteSubsGrid() {
+  Widget _buildEmoteSubsGrid(ScrollController? scrollController) {
     final byChannel = widget.emoteManager.subscriberEmotesByChannel();
     if (byChannel.isEmpty) {
       return const Center(child: Text('No subscriber emotes available'));
     }
     return CustomScrollView(
+      controller: scrollController,
       slivers: [
         for (final entry in byChannel.entries) ...[
           SliverToBoxAdapter(
@@ -3469,29 +3419,33 @@ class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
     );
   }
 
-  Widget _buildEmoteChannelGrid() {
+  Widget _buildEmoteChannelGrid(ScrollController? scrollController) {
     final channel = widget.selectedChannel ?? '';
     final emotes = widget.emoteManager.channelNonTwitchEmotes(channel);
     if (emotes.isEmpty) {
       return const Center(child: Text('No channel emotes'));
     }
-    return _buildEmoteGrid(emotes);
+    return _buildEmoteGrid(emotes, scrollController);
   }
 
-  Widget _buildEmoteGlobalGrid() {
+  Widget _buildEmoteGlobalGrid(ScrollController? scrollController) {
     final emotes = widget.emoteManager.globalEmotes();
     if (emotes.isEmpty) {
       return const Center(child: Text('No global emotes'));
     }
-    return _buildEmoteGrid(emotes);
+    return _buildEmoteGrid(emotes, scrollController);
   }
 
-  Widget _buildEmoteGrid(List<GenericEmote> emotes) {
+  Widget _buildEmoteGrid(
+    List<GenericEmote> emotes,
+    ScrollController? scrollController,
+  ) {
     const maxCells = 15;
     final count = emotes.length > maxCells ? maxCells : emotes.length;
     return GridView.builder(
+      controller: scrollController,
       padding: const EdgeInsets.all(4),
-      physics: const NeverScrollableScrollPhysics(),
+      physics: const AlwaysScrollableScrollPhysics(),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 5,
         mainAxisSpacing: 10,

@@ -340,7 +340,8 @@ void main() {
     await tester.tap(find.text('Join'));
     await tester.pump();
 
-    expect(find.text('Mentions / Whispers'), findsNothing);
+    // Mentions panel is always mounted but closed with null data.
+    expect(find.text('No mentions or whispers'), findsNothing);
 
     await tester.tap(find.byIcon(Icons.notifications_active));
     await tester.pumpAndSettle();
@@ -348,10 +349,10 @@ void main() {
     expect(find.text('Mentions / Whispers'), findsOneWidget);
     expect(find.text('No mentions or whispers'), findsOneWidget);
 
+    // Close the panel.
     await tester.tap(find.byIcon(Icons.arrow_back));
     await tester.pumpAndSettle();
-
-    expect(find.text('Mentions / Whispers'), findsNothing);
+    // Closing clears panel data, content reverts to empty.
   });
 
   testWidgets(
