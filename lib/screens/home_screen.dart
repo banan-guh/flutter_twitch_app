@@ -1095,9 +1095,9 @@ class _HomeScreenState extends State<HomeScreen>
         final dur = DateTime.now().difference(DateTime.parse(started));
         final h = dur.inHours;
         final m = dur.inMinutes.remainder(60);
-        parts.add('Live — $viewers viewers for ${h}h ${m}m');
+        parts.add('Live with $viewers viewers for ${h}h ${m}m');
       } else {
-        parts.add('Live — $viewers viewers');
+        parts.add('Live with $viewers viewers');
       }
     }
     setState(() {

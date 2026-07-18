@@ -17,6 +17,7 @@ class AutocompleteDropdown extends StatefulWidget {
 }
 
 class _AutocompleteDropdownState extends State<AutocompleteDropdown> {
+  static const _fontSize = 16.0;
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -69,12 +70,16 @@ class _AutocompleteDropdownState extends State<AutocompleteDropdown> {
   }
 
   Widget _buildRow(ThemeData theme, Suggestion suggestion) {
+    final lineHeight = _fontSize *
+        (const TextStyle(fontSize: _fontSize).height ?? 1.2);
+    final emoteMaxHeight = lineHeight * 2;
+
     return Material(
       type: MaterialType.transparency,
       child: InkWell(
         onTap: () => widget.onSelect(suggestion),
         child: SizedBox(
-        height: 48,
+        height: 64,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Row(
@@ -86,8 +91,8 @@ class _AutocompleteDropdownState extends State<AutocompleteDropdown> {
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 EmoteSuggestion() => ConstrainedBox(
-                    constraints: const BoxConstraints(
-                      maxHeight: 32,
+                    constraints: BoxConstraints(
+                      maxHeight: emoteMaxHeight,
                       maxWidth: 80,
                     ),
                     child: CachedNetworkImage(
@@ -104,7 +109,7 @@ class _AutocompleteDropdownState extends State<AutocompleteDropdown> {
               Expanded(
                 child: Text(
                   suggestion.displayText,
-                  style: const TextStyle(fontSize: 16),
+                  style: const TextStyle(fontSize: _fontSize),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
