@@ -8,7 +8,7 @@
 
 - [x] **Switch to Send Chat Message API** — Replaced IRC-based message sending with `POST /helix/chat/messages`. Added `user:write:chat` scope. Commands like `/color`, `/ban`, `/timeout` now work again via dedicated API endpoints.
 - [x] **Emotes & Badges** — Render Twitch emotes (global + channel) as images inline; render badges (mod, sub, VIP, etc). Non-negotiable feature, defer until core is solid.
-- [ ] **Command autocomplete** — When typing `/` in the input, show a dropdown of available IRC commands (`/ban`, `/timeout`, `/color`, `/me`, etc). MUST HAVE, high priority.
+- [x] **Command autocomplete** — When typing `/` in the input, show a dropdown of available IRC commands (`/ban`, `/timeout`, `/color`, `/me`, etc). MUST HAVE, high priority.
 - [x] **IRC command support** — Commands routed through dedicated API endpoints: `/ban`, `/timeout`, `/unban`, `/color`, `/delete`, `/clear`, `/announce`, `/shoutout`. `/me` sent via IRC (only supported IRC command).
 - [x] **User profiles** — Tap a username → bottom sheet (1/3 screen) with PFP top-left, display name and account creation date top-right, four buttons: Mention, Whisper, Block, Report.
 - [x] **Swipe between channels** — Swipe left/right on the chat area to move to the adjacent channel, in addition to tapping the channel bar.

@@ -25,6 +25,7 @@ import '../color_utils.dart';
 import '../services/user_store.dart';
 import '../services/suggestion.dart';
 import '../widgets/autocomplete_dropdown.dart';
+import '../util/text_bypass.dart';
 
 enum OverlayPanel { closed, thread, mentions, emotes }
 
@@ -121,6 +122,8 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _currentUserColor;
   String? _currentUserId;
   String? _lastSentText;
+  final Map<String, String> _lastTypedText = {};
+  final Map<String, String> _lastSentWireText = {};
   bool _wasConnected = false;
   bool _wasDisconnected = false;
   bool _userTwitchEmotesLoaded = false;
@@ -583,7 +586,9 @@ class _HomeScreenState extends State<HomeScreen> {
         msg.username.toLowerCase() == _currentUserLogin!.toLowerCase()) {
       String? pendingKey;
       for (final entry in _pendingLocals.entries) {
-        if (entry.value.channel == channel && entry.value.text == msg.text) {
+        if (entry.value.channel == channel &&
+            normalizeForReconciliation(entry.value.text) ==
+                normalizeForReconciliation(msg.text)) {
           pendingKey = entry.key;
           break;
         }
@@ -687,7 +692,9 @@ class _HomeScreenState extends State<HomeScreen> {
     String? pendingKey;
     TwitchMessage? pendingMsg;
     for (final entry in _pendingLocals.entries) {
-      if (entry.value.channel == channel && entry.value.text == text) {
+      if (entry.value.channel == channel &&
+          normalizeForReconciliation(entry.value.text) ==
+              normalizeForReconciliation(text)) {
         pendingKey = entry.key;
         break;
       }
@@ -1297,6 +1304,16 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
+    final String wireText;
+    if (text == _lastTypedText[channel]) {
+      final lastWire = _lastSentWireText[channel] ?? text;
+      wireText = bypassTextDuplicate(lastWire);
+    } else {
+      wireText = text;
+    }
+    _lastTypedText[channel] = text;
+    _lastSentWireText[channel] = wireText;
+
     // Try Helix API if available.
     if (_currentUserId != null && auth.isConfigured) {
       final broadcasterId =
@@ -1307,7 +1324,7 @@ class _HomeScreenState extends State<HomeScreen> {
             auth,
             broadcasterId: broadcasterId,
             senderId: _currentUserId!,
-            message: text,
+            message: wireText,
             replyParentMessageId: reply?.messageId,
           );
           if (messageId != null && mounted) {
@@ -1321,7 +1338,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // IRC fallback — insert optimistically with temp ID.
     _insertLocalMessage(text, channel, null, reply);
-    _irc.sendMessage(channel, text, replyParentMessageId: reply?.messageId);
+    _irc.sendMessage(channel, wireText, replyParentMessageId: reply?.messageId);
   }
 
   void _onSendLongPress() {
@@ -3569,6 +3586,13 @@ class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
   void initState() {
     super.initState();
     _loadRecentEmotes();
+    widget.emoteManager.addListener(_loadRecentEmotes);
+  }
+
+  @override
+  void dispose() {
+    widget.emoteManager.removeListener(_loadRecentEmotes);
+    super.dispose();
   }
 
   Future<void> _loadRecentEmotes() async {

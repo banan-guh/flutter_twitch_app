@@ -85,19 +85,18 @@ class _AutocompleteDropdownState extends State<AutocompleteDropdown> {
                     size: 20,
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
-                EmoteSuggestion() => SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(4),
-                      child: CachedNetworkImage(
-                        imageUrl: suggestion.emote.url,
-                        fit: BoxFit.contain,
-                        fadeInDuration: Duration.zero,
-                        placeholder: (_, _) => const SizedBox(),
-                        errorWidget: (_, _, _) =>
-                            const Icon(Icons.image, size: 16),
-                      ),
+                EmoteSuggestion() => ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      maxHeight: 28,
+                      maxWidth: 80,
+                    ),
+                    child: CachedNetworkImage(
+                      imageUrl: suggestion.emote.url,
+                      fit: BoxFit.contain,
+                      fadeInDuration: Duration.zero,
+                      placeholder: (_, _) => const SizedBox(),
+                      errorWidget: (_, _, _) =>
+                          const Icon(Icons.image, size: 16),
                     ),
                   ),
               },

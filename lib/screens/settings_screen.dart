@@ -41,7 +41,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   _AuthState _authState = _AuthState.idle;
   String? _authError;
   int _maxMessagesPerChannel = 200;
-  double _uiScale = 1.0;
   bool _useBrowserOAuth = false;
   String? _browserAuthState;
   String? _browserAuthUrl;
@@ -53,7 +52,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (widget.twitchAuth.isConfigured) _authState = _AuthState.success;
     widget.channelNotifier?.addListener(_onChannelsChanged);
     _loadMaxMessages();
-    _loadUiScale();
     _loadOAuthMode();
   }
 
@@ -63,15 +61,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() {
         _maxMessagesPerChannel =
             prefs.getInt('max_messages_per_channel') ?? 200;
-      });
-    }
-  }
-
-  Future<void> _loadUiScale() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (mounted) {
-      setState(() {
-        _uiScale = prefs.getDouble('ui_scale') ?? 1.0;
       });
     }
   }
@@ -298,27 +287,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   final prefs = await SharedPreferences.getInstance();
                   await prefs.setInt('max_messages_per_channel', v);
                   if (mounted) setState(() => _maxMessagesPerChannel = v);
-                },
-              ),
-            ],
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Text('UI scale: ${_uiScale.toStringAsFixed(1)}x'),
-              ),
-              Slider(
-                value: _uiScale,
-                min: 0.5,
-                max: 2.0,
-                divisions: 15,
-                label: '${_uiScale.toStringAsFixed(1)}x',
-                onChanged: (value) async {
-                  final prefs = await SharedPreferences.getInstance();
-                  await prefs.setDouble('ui_scale', value);
-                  if (mounted) setState(() => _uiScale = value);
                 },
               ),
             ],

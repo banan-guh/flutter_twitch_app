@@ -328,11 +328,12 @@ final _urlRegExp = RegExp(
 );
 
 List<InlineSpan> parseTextWithLinks(String text) {
+  final collapsed = text.replaceAll(RegExp(r' {2,}'), ' ');
   final spans = <InlineSpan>[];
   int lastEnd = 0;
-  for (final match in _urlRegExp.allMatches(text)) {
+  for (final match in _urlRegExp.allMatches(collapsed)) {
     if (match.start > lastEnd) {
-      spans.add(TextSpan(text: text.substring(lastEnd, match.start)));
+      spans.add(TextSpan(text: collapsed.substring(lastEnd, match.start)));
     }
     var url = match.group(0)!;
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
@@ -348,8 +349,8 @@ List<InlineSpan> parseTextWithLinks(String text) {
     );
     lastEnd = match.end;
   }
-  if (lastEnd < text.length) {
-    spans.add(TextSpan(text: text.substring(lastEnd)));
+  if (lastEnd < collapsed.length) {
+    spans.add(TextSpan(text: collapsed.substring(lastEnd)));
   }
   return spans;
 }
