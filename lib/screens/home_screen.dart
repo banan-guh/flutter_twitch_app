@@ -14,6 +14,7 @@ import '../services/twitch_irc.dart';
 import '../services/twitch_irc_read.dart';
 import '../services/recent_messages.dart';
 import '../services/command_handler.dart';
+import '../services/chat_connection_manager.dart';
 import '../services/emote_manager.dart';
 import '../services/twitch_badge_service.dart';
 import '../services/emote_providers/twitch_emotes.dart';
@@ -32,7 +33,6 @@ import '../widgets/message_input.dart';
 import '../widgets/thread_panel.dart';
 import '../widgets/mentions_panel.dart';
 import '../widgets/emote_menu_panel.dart';
-import '../util/text_bypass.dart';
 import '../services/foreground_task.dart';
 
 enum OverlayPanel { closed, thread, mentions, emotes }
@@ -70,6 +70,57 @@ class _HomeScreenState extends State<HomeScreen>
   late final _ircRead = widget.ircReadService ?? IrcReadService();
   late final _recentMessages =
       widget.recentMessagesService ?? RecentMessagesService();
+  late final _chatConn = ChatConnectionManager(
+    eventSub: _eventSub,
+    irc: _irc,
+    ircRead: _ircRead,
+    recentMessages: _recentMessages,
+    emoteManager: _emoteManager,
+    badgeService: _badgeService,
+    userStore: _userStore,
+    twitchAuth: widget.twitchAuth,
+    channelMessages: _channelMessages,
+    messageKeys: _messageKeys,
+    chatStatus: _chatStatus,
+    channelsWithUnread: _channelsWithUnread,
+    channelsWithUnreadMentions: _channelsWithUnreadMentions,
+    unreadMentionsPerChannel: _unreadMentionsPerChannel,
+    channels: _channels,
+    historyLoaded: _historyLoaded,
+    channelsEmotesResolved: _channelsEmotesResolved,
+    channelUserIds: _channelUserIds,
+    pendingLocals: _pendingLocals,
+    lastTypedText: _lastTypedText,
+    lastSentWireText: _lastSentWireText,
+    ownMessageIds: _ownMessageIds,
+    chatVersion: _chatVersion,
+    mentionsChannel: _mentionsChannel,
+    onRebuild: () {
+      if (mounted) setState(() {});
+    },
+    onSystemMessage: _addSystemMessage,
+    loadUserTwitchEmotes: _loadUserTwitchEmotes,
+    onTruncateChannelMessages: _truncateChannelMessages,
+    getMaxMessagesPerChannel: () => _maxMessagesPerChannel,
+    getSelectedChannel: () => _selectedChannel,
+    getUnreadMentions: () => _unreadMentions,
+    setUnreadMentions: (v) => _unreadMentions = v,
+    getCurrentUserLogin: () => _currentUserLogin,
+    setCurrentUserLogin: (v) => _currentUserLogin = v,
+    getCurrentUserId: () => _currentUserId,
+    setCurrentUserId: (v) => _currentUserId = v,
+    getCurrentUserColor: () => _currentUserColor,
+    setCurrentUserColor: (v) => _currentUserColor = v,
+    onCommand: _handleCommand,
+    getReplyToMsg: () => _replyToMsg,
+    setReplyToMsg: (v) => _replyToMsg = v,
+    onRequestFocus: () => _focusNode.requestFocus(),
+    onShowSnackBar: (msg) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      }
+    },
+  );
   late final _commandHandler = CommandHandler(
     irc: _irc,
     getChannelUserIds: () => _channelUserIds,
@@ -130,8 +181,7 @@ class _HomeScreenState extends State<HomeScreen>
   StreamSubscription<String>? _userColorSub;
 
   final _ownMessageIds = <String>{};
-  int _localCounter = 0;
-  final _pendingLocals = <String, _PendingLocal>{};
+  final _pendingLocals = <String, PendingLocal>{};
 
   String? _currentUserLogin;
   String? _currentUserColor;
@@ -139,10 +189,6 @@ class _HomeScreenState extends State<HomeScreen>
   String? _lastSentText;
   final Map<String, String> _lastTypedText = {};
   final Map<String, String> _lastSentWireText = {};
-  bool _wasConnected = false;
-  bool _wasDisconnected = false;
-  bool _userTwitchEmotesLoaded = false;
-  EventSubStatus _connectionStatus = EventSubStatus.disconnected;
 
   void _onSheetSizeChanged(OverlayPanel panel, DraggableScrollableController ctrl) {
     // When the user drags a sheet down to size 0, close the panel.
@@ -361,7 +407,7 @@ class _HomeScreenState extends State<HomeScreen>
           (c) => _emoteManager.resolveEmotes(c, _channelUserIds[c]),
         ),
       );
-      _userTwitchEmotesLoaded = false;
+      _chatConn.userTwitchEmotesLoaded = false;
       unawaited(_loadUserTwitchEmotes());
     } catch (e) {
       debugPrint('_refreshEmotesAfterAuth failed: $e');
@@ -426,6 +472,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   void dispose() {
+    _chatConn.mounted = false;
     WidgetsBinding.instance.removeObserver(this);
     _messageSub?.cancel();
     _statusSub?.cancel();
@@ -458,412 +505,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _connect() async {
-    final auth = widget.twitchAuth;
-
-    // Always listen for EventSub messages/incoming data, regardless of auth
-    // state. In tests these come from injected fake services; in production
-    // they flow from the EventSub WebSocket once connected.
-    _messageSub ??= _eventSub.onMessage.listen(_onMessage);
-    _deleteSub ??= _eventSub.onMessageDeleted.listen((event) {
-      if (!mounted) return;
-      final msgs = _channelMessages[event.channel];
-      if (msgs == null) return;
-      String? deletedUser;
-      String? deletedText;
-      for (final msg in msgs) {
-        if (msg.messageId == event.messageId && !msg.isSystem) {
-          msg.deleted = true;
-          deletedUser = msg.username;
-          deletedText = msg.text;
-          break;
-        }
-      }
-      if (deletedUser != null && deletedText != null) {
-        _addSystemMessage(
-          event.channel,
-          'A message from $deletedUser was deleted saying: "$deletedText".',
-        );
-      }
-    });
-
-    _ircBanSub?.cancel();
-    _ircBanSub = _irc.onBan.listen((event) {
-      if (!mounted) return;
-      final text = event.isTimeout
-          ? '${event.user} was timed out${event.duration != null ? ' for ${event.duration}s' : ''}.'
-          : '${event.user} was banned.';
-      _addSystemMessage(event.channel, text);
-    });
-
-    _ircNoticeSub?.cancel();
-    _ircNoticeSub = _irc.onNotice.listen((event) {
-      if (!mounted) return;
-      _addSystemMessage(event.channel, event.message);
-    });
-
-    _ircJtvSub?.cancel();
-    _ircJtvSub = _irc.onJtvMessage.listen((event) {
-      if (!mounted) return;
-      _addSystemMessage(event.channel, event.message);
-    });
-
-    _ircOwnMsgSub?.cancel();
-    _ircOwnMsgSub = _ircRead.onOwnMessage.listen(_onOwnIrcMessage);
-
-    _userColorSub?.cancel();
-    _userColorSub = _ircRead.onUserColor.listen((color) {
-      _currentUserColor = color;
-    });
-
-    if (!auth.isConfigured) return;
-
-    _statusSub?.cancel();
-    _statusSub = _eventSub.onStatus.listen((status) async {
-      if (!mounted) return;
-      setState(() {
-        _connectionStatus = status;
-      });
-      if (status == EventSubStatus.connected && !_wasConnected) {
-        _wasConnected = true;
-        _wasDisconnected = false;
-        await Future.delayed(const Duration(milliseconds: 500));
-        try {
-          await _subscribeAll();
-          if (!_userTwitchEmotesLoaded) {
-            _userTwitchEmotesLoaded = true;
-            unawaited(_loadUserTwitchEmotes());
-          }
-        } catch (_) {}
-        for (final channel in _channels) {
-          if (_historyLoaded.contains(channel)) {
-            _addSystemMessage(channel, 'Connected');
-          }
-        }
-      }
-      if (status == EventSubStatus.disconnected && !_wasDisconnected) {
-        _wasDisconnected = true;
-        _wasConnected = false;
-        for (final channel in _channels) {
-          _addSystemMessage(channel, 'Disconnected');
-        }
-      }
-    });
-
-    if (_currentUserLogin == null) {
-      try {
-        final currentUser = await TwitchApi.getCurrentUser(auth);
-        if (currentUser != null) {
-          _currentUserLogin = currentUser['login'];
-          _currentUserId = currentUser['id'];
-        }
-      } catch (_) {}
-    }
-
-    if (_currentUserLogin != null && auth.accessToken != null) {
-      try {
-        await _irc.connect(
-          username: _currentUserLogin!,
-          accessToken: auth.accessToken!,
-        );
-      } catch (_) {}
-      try {
-        await _ircRead.connect(
-          username: _currentUserLogin!,
-          accessToken: auth.accessToken!,
-        );
-      } catch (_) {}
-    }
-
-    await _eventSub.connect();
-  }
-
-  void _onMessage(TwitchMessage msg) {
-    if (!mounted) return;
-
-    if (!msg.isSystem && msg.username.isNotEmpty && msg.channel != null) {
-      _userStore.addUser(msg.channel!, msg.username);
-    }
-
-    final channel = msg.channel;
-    if (channel == null) return;
-
-    if (msg.messageId != null &&
-        _messageKeys.containsKey('$channel:${msg.messageId}')) {
-      // EventSub may deliver our own message with emote fragments that the
-      // local optimistic insert didn't have. Replace to get proper rendering.
-      final existing = _channelMessages[channel];
-      if (msg.emotePositions != null && existing != null) {
-        final idx = existing.indexWhere(
-          (m) => m.messageId == msg.messageId,
-        );
-        if (idx != -1) {
-          existing[idx] = msg;
-          _chatVersion.value++;
-          if (mounted) setState(() {});
-        }
-      }
-      return;
-    }
-
-    if (msg.messageId != null &&
-        _currentUserLogin != null &&
-        msg.username.toLowerCase() == _currentUserLogin!.toLowerCase()) {
-      String? pendingKey;
-      for (final entry in _pendingLocals.entries) {
-        if (entry.value.channel == channel &&
-            normalizeForReconciliation(entry.value.text) ==
-                normalizeForReconciliation(msg.text)) {
-          pendingKey = entry.key;
-          break;
-        }
-      }
-      if (pendingKey != null) {
-        _pendingLocals.remove(pendingKey);
-        _channelMessages[channel]?.removeWhere(
-          (m) => m.messageId == pendingKey,
-        );
-      }
-      _ownMessageIds.add(msg.messageId!);
-    }
-
-    if (msg.sourceBroadcasterId != null &&
-        _badgeService.resolveChannelAvatar(msg.sourceBroadcasterId!) == null) {
-      _badgeService.fetchChannelAvatar(
-        widget.twitchAuth,
-        msg.sourceBroadcasterId!,
-      );
-    }
-
-    final login = _currentUserLogin?.toLowerCase();
-
-    final isReplyToMe =
-        login != null &&
-        !msg.isSystem &&
-        !msg.isHistory &&
-        msg.replyToUser != null &&
-        msg.replyToUser!.toLowerCase() == login;
-    final isMention =
-        (login != null &&
-            !msg.isSystem &&
-            !msg.isHistory &&
-            _isMention(msg, login)) ||
-        isReplyToMe;
-
-    if (isMention) {
-      if (!msg.isHighlighted && channel != _selectedChannel) {
-        _unreadMentions++;
-        _channelsWithUnreadMentions.add(channel);
-        _unreadMentionsPerChannel[channel] =
-            (_unreadMentionsPerChannel[channel] ?? 0) + 1;
-      }
-      msg.isHighlighted = true;
-    }
-
-    _channelMessages.putIfAbsent(channel, () => []);
-    _channelMessages[channel]!.insert(0, msg);
-    _truncateChannelMessages(channel);
-
-    if (msg.messageId != null) {
-      _messageKeys.putIfAbsent('$channel:${msg.messageId}', () => GlobalKey());
-    }
-
-    if (msg.isHighlighted) {
-      _channelMessages.putIfAbsent(_mentionsChannel, () => []);
-      _channelMessages[_mentionsChannel]!.insert(0, msg);
-    }
-
-    _chatVersion.value++;
-
-    var needsHeaderRebuild = false;
-    if (channel != _selectedChannel && !msg.isHistory) {
-      _channelsWithUnread.add(channel);
-      needsHeaderRebuild = true;
-    }
-    if (msg.isHighlighted) {
-      needsHeaderRebuild = true;
-    }
-    if (needsHeaderRebuild && mounted) {
-      setState(() {});
-    }
-    _precacheMessageEmotes(msg, channel);
-  }
-
-  void _onOwnIrcMessage(IrcMessage ircMsg) {
-    if (!mounted) return;
-    final channel = ircMsg.params.isNotEmpty
-        ? ircMsg.params[0].substring(1)
-        : null;
-    if (channel == null || ircMsg.trailing == null) return;
-
-    final displayName =
-        ircMsg.tags['display-name']?.trim() ?? _currentUserLogin ?? '';
-    if (displayName.isNotEmpty) {
-      _userStore.addUser(channel, displayName);
-    }
-
-    final colorTag = ircMsg.tags['color'];
-    if (colorTag != null && colorTag.isNotEmpty) {
-      _currentUserColor = colorTag;
-    }
-
-    final messageId = ircMsg.tags['id'];
-    final text = ircMsg.trailing!;
-
-    if (messageId != null && _messageKeys.containsKey('$channel:$messageId')) {
-      return;
-    }
-
-    String? pendingKey;
-    TwitchMessage? pendingMsg;
-    for (final entry in _pendingLocals.entries) {
-      if (entry.value.channel == channel &&
-          normalizeForReconciliation(entry.value.text) ==
-              normalizeForReconciliation(text)) {
-        pendingKey = entry.key;
-        break;
-      }
-    }
-    if (pendingKey != null) {
-      final existing = _channelMessages[channel];
-      if (existing != null) {
-        final idx = existing.indexWhere((m) => m.messageId == pendingKey);
-        if (idx != -1) {
-          pendingMsg = existing[idx];
-        }
-      }
-      _pendingLocals.remove(pendingKey);
-      _channelMessages[channel]?.removeWhere((m) => m.messageId == pendingKey);
-    }
-
-    final tsMs = ircMsg.tags['tmi-sent-ts'];
-    final timestamp = tsMs != null
-        ? DateTime.fromMillisecondsSinceEpoch(int.parse(tsMs), isUtc: true)
-        : DateTime.now().toUtc();
-
-    final userId = ircMsg.tags['user-id'] ?? _currentUserId;
-    final color =
-        ircMsg.tags['color'] != null && ircMsg.tags['color']!.isNotEmpty
-        ? ircMsg.tags['color']!
-        : pickColor(displayName.toLowerCase());
-
-    List<EmotePosition>? emotePositions;
-    final emotesTag = ircMsg.tags['emotes'];
-    if (emotesTag != null && emotesTag.isNotEmpty) {
-      emotePositions = [];
-      for (final emoteEntry in emotesTag.split('/')) {
-        final colonIdx = emoteEntry.indexOf(':');
-        if (colonIdx == -1) continue;
-        final emoteId = emoteEntry.substring(0, colonIdx);
-        final positionsStr = emoteEntry.substring(colonIdx + 1);
-        for (final posStr in positionsStr.split(',')) {
-          final dashIdx = posStr.indexOf('-');
-          if (dashIdx == -1) continue;
-          final start = int.tryParse(posStr.substring(0, dashIdx));
-          final end = int.tryParse(posStr.substring(dashIdx + 1));
-          if (start == null || end == null) continue;
-          if (start < 0 || end >= text.length) continue;
-          final emoteCode = text.substring(start, end + 1);
-          emotePositions.add(
-            EmotePosition(
-              emoteId: emoteId,
-              startIndex: start,
-              endIndex: end + 1,
-              emoteCode: emoteCode,
-            ),
-          );
-        }
-      }
-      if (emotePositions.isEmpty) emotePositions = null;
-    }
-
-    final msg = TwitchMessage(
-      username: displayName,
-      text: text,
-      channel: channel,
-      messageId: messageId,
-      timestamp: timestamp,
-      userId: userId,
-      color: color,
-      replyToParentId: pendingMsg?.replyToParentId,
-      replyToUser: pendingMsg?.replyToUser,
-      replyToText: pendingMsg?.replyToText,
-      emotePositions: emotePositions,
-    );
-
-    _channelMessages.putIfAbsent(channel, () => []);
-    _channelMessages[channel]!.insert(0, msg);
-    _truncateChannelMessages(channel);
-
-    if (messageId != null) {
-      _messageKeys.putIfAbsent('$channel:$messageId', () => GlobalKey());
-    }
-
-    _chatVersion.value++;
-    if (mounted) setState(() {});
-    _precacheMessageEmotes(msg, channel);
-  }
-
-  void _insertLocalMessage(
-    String text,
-    String channel,
-    String? messageId,
-    TwitchMessage? replyTo,
-  ) {
-    final login = _currentUserLogin;
-    if (login == null) return;
-
-    final useTempId = messageId == null;
-    final effectiveId = useTempId ? 'local_${_localCounter++}' : messageId;
-
-    if (!useTempId && _messageKeys.containsKey('$channel:$effectiveId')) {
-      return;
-    }
-
-    final msg = TwitchMessage(
-      username: login,
-      text: text,
-      channel: channel,
-      messageId: effectiveId,
-      color: _currentUserColor ?? pickColor(login.toLowerCase()),
-      userId: _currentUserId,
-      replyToParentId: replyTo?.messageId,
-      replyToUser: replyTo?.username,
-      replyToText: replyTo?.text,
-    );
-    _channelMessages.putIfAbsent(channel, () => []);
-    _channelMessages[channel]!.insert(0, msg);
-    if (useTempId) {
-      _pendingLocals[effectiveId] = _PendingLocal(channel, text);
-    }
-    _truncateChannelMessages(channel);
-    if (!useTempId) {
-      _messageKeys.putIfAbsent('$channel:$messageId', () => GlobalKey());
-    }
-    _chatVersion.value++;
-    if (mounted) setState(() {});
-  }
-
-  void _precacheMessageEmotes(TwitchMessage msg, String channel) {
-    if (msg.isSystem || msg.isHistory) return;
-    final channelEmotes = _emoteManager.byCode(channel);
-    if (channelEmotes == null) return;
-    final found = <GenericEmote>[];
-    final seen = <String>{};
-    for (final word in msg.text.split(RegExp(r'\s+'))) {
-      if (seen.contains(word)) continue;
-      final emote = channelEmotes.byCode[word];
-      if (emote != null) {
-        found.add(emote);
-        seen.add(word);
-      }
-    }
-    if (found.isNotEmpty) {
-      _emoteManager.enqueueSeenEmotes(found);
-    }
-  }
-
-  bool _isMention(TwitchMessage msg, String login) {
-    return isMention(msg.text, login);
+    _chatConn.connect();
   }
 
   void _addSystemMessage(String channel, String text) {
@@ -1000,10 +642,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _maybeAddConnected(String channel) {
-    if (_connectionStatus == EventSubStatus.connected &&
-        _historyLoaded.contains(channel)) {
-      _addSystemMessage(channel, 'Connected');
-    }
+    _chatConn.maybeAddConnected(channel);
   }
 
   Future<void> _addChannel(String channelName) async {
@@ -1076,132 +715,8 @@ class _HomeScreenState extends State<HomeScreen>
     if (mounted) setState(() {});
   }
 
-  Future<void> _fetchChatStatus(String channel) async {
-    final auth = widget.twitchAuth;
-    if (!auth.isConfigured) return;
-
-    final userId = _channelUserIds[channel];
-    if (userId == null || _currentUserId == null) return;
-
-    final settings = await TwitchApi.getChatSettings(
-      auth,
-      userId,
-      _currentUserId!,
-    );
-    final stream = await TwitchApi.getStreamInfo(auth, userId);
-
-    if (!mounted) return;
-    final parts = <String>[];
-    if (settings != null) {
-      if (settings['follower_mode'] == true) parts.add('Followers-only');
-      if (settings['subscriber_mode'] == true) parts.add('Subscribers-only');
-      if (settings['emote_mode'] == true) parts.add('Emote-only');
-      if (settings['slow_mode'] == true) {
-        final wait = settings['slow_mode_wait_time'] ?? '?';
-        parts.add('Slow ($wait${wait == '?' ? '' : 's'})');
-      }
-    }
-    if (stream != null && stream['type'] == 'live') {
-      final viewers = stream['viewer_count'] ?? 0;
-      final started = stream['started_at'] as String?;
-      if (started != null) {
-        final dur = DateTime.now().difference(DateTime.parse(started));
-        final h = dur.inHours;
-        final m = dur.inMinutes.remainder(60);
-        parts.add('Live with $viewers viewers for ${h}h ${m}m');
-      } else {
-        parts.add('Live with $viewers viewers');
-      }
-    }
-    setState(() {
-      _chatStatus[channel] = parts.isNotEmpty ? parts.join(' · ') : '';
-    });
-  }
-
   Future<void> _subscribeChannel(String channelName) async {
-    try {
-      final auth = widget.twitchAuth;
-      final channelUserId = await TwitchApi.getUserId(auth, channelName);
-      if (channelUserId == null) return;
-      _channelUserIds[channelName] = channelUserId;
-      _badgeService.fetchChannelBadges(auth, channelUserId, channelName);
-
-      _emoteManager.accessToken = auth.accessToken;
-      debugPrint(
-        '_subscribeChannel $channelName userId=$channelUserId '
-        'hasToken=${auth.accessToken != null} resolved=${_channelsEmotesResolved.contains(channelName)}',
-      );
-      if (!_channelsEmotesResolved.contains(channelName)) {
-        await _emoteManager.resolveEmotes(channelName, channelUserId);
-        _channelsEmotesResolved.add(channelName);
-      }
-
-      if (_currentUserLogin == null) {
-        final currentUser = await TwitchApi.getCurrentUser(auth);
-        if (currentUser == null) return;
-        _currentUserLogin = currentUser['login'];
-        _currentUserId = currentUser['id'];
-      }
-
-      if (!_userTwitchEmotesLoaded) {
-        _userTwitchEmotesLoaded = true;
-        unawaited(_loadUserTwitchEmotes());
-      }
-
-      _eventSub.setChannelMapping(channelUserId, channelName);
-
-      for (int attempt = 0; attempt < 3; attempt++) {
-        final sessionId = _eventSub.sessionId;
-        if (sessionId == null) {
-          if (attempt == 2) {
-            _addSystemMessage(channelName, 'Warning: EventSub session lost');
-          }
-          await Future.delayed(const Duration(seconds: 1));
-          continue;
-        }
-
-        if (attempt > 0) await Future.delayed(const Duration(seconds: 1));
-
-        final ok = await TwitchApi.createSubscription(
-          auth: auth,
-          sessionId: sessionId,
-          broadcasterUserId: channelUserId,
-          userId: _currentUserId!,
-        );
-        if (ok) {
-          final okDel = await TwitchApi.createDeleteSubscription(
-            auth: auth,
-            sessionId: sessionId,
-            broadcasterUserId: channelUserId,
-            userId: _currentUserId!,
-          );
-          if (!okDel) {
-            _addSystemMessage(
-              channelName,
-              'Warning: delete subscription failed (${TwitchApi.lastError ?? "unknown"})',
-            );
-          }
-          break;
-        }
-        if (attempt == 2) {
-          _addSystemMessage(
-            channelName,
-            'Warning: chat subscription failed (${TwitchApi.lastError ?? "unknown"})',
-          );
-        }
-      }
-    } catch (_) {}
-
-    if (mounted) {
-      setState(() {});
-      _fetchChatStatus(channelName);
-    }
-  }
-
-  Future<void> _subscribeAll() async {
-    for (final channel in _channels) {
-      await _subscribeChannel(channel);
-    }
+    _chatConn.subscribeChannel(channelName);
   }
 
   void _addChannelDialog() {
@@ -1302,67 +817,7 @@ class _HomeScreenState extends State<HomeScreen>
     String channel, {
     TwitchMessage? replyTo,
   }) async {
-    final auth = widget.twitchAuth;
-    final reply = replyTo ?? _replyToMsg;
-
-    // Handle slash commands via dedicated API endpoints.
-    if (text.startsWith('/')) {
-      _handleCommand(text, channel, auth);
-      _focusNode.requestFocus();
-      return;
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _replyToMsg = null;
-    });
-    _focusNode.requestFocus();
-
-    final userLogin = _currentUserLogin;
-    if (userLogin == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Connect an account to chat')),
-        );
-      }
-      return;
-    }
-
-    final String wireText;
-    if (text == _lastTypedText[channel]) {
-      final lastWire = _lastSentWireText[channel] ?? text;
-      wireText = bypassTextDuplicate(lastWire);
-    } else {
-      wireText = text;
-    }
-    _lastTypedText[channel] = text;
-    _lastSentWireText[channel] = wireText;
-
-    // Try Helix API if available.
-    if (_currentUserId != null && auth.isConfigured) {
-      final broadcasterId =
-          _channelUserIds[channel] ?? await TwitchApi.getUserId(auth, channel);
-      if (broadcasterId != null) {
-        try {
-          final messageId = await TwitchApi.sendChatMessage(
-            auth,
-            broadcasterId: broadcasterId,
-            senderId: _currentUserId!,
-            message: wireText,
-            replyParentMessageId: reply?.messageId,
-          );
-          if (messageId != null && mounted) {
-            _ownMessageIds.add(messageId);
-            _insertLocalMessage(text, channel, messageId, reply);
-          }
-        } catch (_) {}
-        return;
-      }
-    }
-
-    // IRC fallback — insert optimistically with temp ID.
-    _insertLocalMessage(text, channel, null, reply);
-    _irc.sendMessage(channel, wireText, replyParentMessageId: reply?.messageId);
+    _chatConn.doSendMessage(text, channel, replyTo: replyTo);
   }
 
   void _onSendLongPress() {
@@ -1642,34 +1097,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _truncateChannelMessages(String channel) {
-    final maxMessages = _maxMessagesPerChannel;
-    if (maxMessages <= 0) return;
-    final msgs = _channelMessages[channel];
-    if (msgs == null || msgs.length <= maxMessages) return;
-
-    final threadParentIds = <String>{};
-    for (final m in msgs) {
-      if (m.replyToParentId != null) {
-        threadParentIds.add(m.replyToParentId!);
-      }
-    }
-
-    final toRemove = <int>[];
-    int extra = msgs.length - maxMessages;
-    for (int i = msgs.length - 1; i >= 0 && extra > 0; i--) {
-      final m = msgs[i];
-      final inThread =
-          (m.messageId != null && threadParentIds.contains(m.messageId!)) ||
-          m.replyToParentId != null;
-      if (!inThread) {
-        toRemove.add(i);
-        extra--;
-      }
-    }
-
-    for (final i in toRemove) {
-      msgs.removeAt(i);
-    }
+    _chatConn.truncateChannelMessages(channel);
   }
 
   @override
@@ -2373,10 +1801,4 @@ bool isMention(String text, String login) {
     if (lower == '@$login' || lower == login) return true;
   }
   return false;
-}
-
-class _PendingLocal {
-  final String channel;
-  final String text;
-  _PendingLocal(this.channel, this.text);
 }
