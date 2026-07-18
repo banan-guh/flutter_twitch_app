@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../services/suggestion.dart';
 
-class AutocompleteDropdown extends StatelessWidget {
+class AutocompleteDropdown extends StatefulWidget {
   final List<Suggestion> suggestions;
   final void Function(Suggestion) onSelect;
 
@@ -13,36 +13,67 @@ class AutocompleteDropdown extends StatelessWidget {
   });
 
   @override
+  State<AutocompleteDropdown> createState() => _AutocompleteDropdownState();
+}
+
+class _AutocompleteDropdownState extends State<AutocompleteDropdown> {
+  @override
   Widget build(BuildContext context) {
-    if (suggestions.isEmpty) return const SizedBox.shrink();
-
     final theme = Theme.of(context);
-    final maxItems = suggestions.length.clamp(0, 4);
 
-    return Container(
-      constraints: BoxConstraints(maxHeight: maxItems * 48.0),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest,
-        border: Border(
-          top: BorderSide(color: theme.dividerColor.withValues(alpha: 0.3)),
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 150),
+      switchInCurve: Curves.decelerate,
+      switchOutCurve: Curves.easeIn,
+      transitionBuilder: (child, animation) {
+        return FadeTransition(
+          opacity: animation,
+          child: SizeTransition(
+            sizeFactor: animation,
+            axis: Axis.vertical,
+            alignment: Alignment.topCenter,
+            child: child,
+          ),
+        );
+      },
+      child: widget.suggestions.isEmpty
+          ? const SizedBox.shrink()
+          : _buildContent(theme),
+    );
+  }
+
+  Widget _buildContent(ThemeData theme) {
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.ease,
+      alignment: Alignment.topCenter,
+      child: Container(
+        key: const Key('autocomplete_dropdown'),
+        decoration: BoxDecoration(
+          color: theme.scaffoldBackgroundColor,
+          border: Border(
+            top: BorderSide(color: theme.dividerColor.withValues(alpha: 0.3)),
+          ),
         ),
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (var i = 0; i < maxItems; i++)
-              _buildRow(theme, suggestions[i]),
-          ],
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final suggestion in widget.suggestions)
+                _buildRow(theme, suggestion),
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildRow(ThemeData theme, Suggestion suggestion) {
-    return InkWell(
-      onTap: () => onSelect(suggestion),
-      child: SizedBox(
+    return Material(
+      type: MaterialType.transparency,
+      child: InkWell(
+        onTap: () => widget.onSelect(suggestion),
+        child: SizedBox(
         height: 48,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -81,6 +112,7 @@ class AutocompleteDropdown extends StatelessWidget {
             ],
           ),
         ),
+      ),
       ),
     );
   }

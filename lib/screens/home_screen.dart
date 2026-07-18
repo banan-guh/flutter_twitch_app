@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -961,8 +962,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   Navigator.pop(ctx);
                 },
               ),
-          ],
-        ),
+            ],
+          ),
       ),
     );
   }
@@ -2137,6 +2138,29 @@ class _HomeScreenState extends State<HomeScreen> {
                           },
                         ),
                       ),
+
+                      // Autocomplete dropdown — floats above chat, anchored just
+                      // above the message input, 60% width like DankChat's popup.
+                      Positioned(
+                        bottom: 0,
+                        left: 0,
+                        child: SizedBox(
+                          width: (MediaQuery.of(context).size.width * 0.6)
+                              .clamp(0.0, 340.0),
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxHeight: min(
+                                MediaQuery.of(context).size.height * 0.25,
+                                192.0,
+                              ),
+                            ),
+                            child: AutocompleteDropdown(
+                              suggestions: _suggestions,
+                              onSelect: _onSuggestionSelected,
+                            ),
+                          ),
+                        ),
+                      ),
                     ],
                   );
                 },
@@ -2149,12 +2173,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (_suggestions.isNotEmpty)
-                  AutocompleteDropdown(
-                    key: const Key('autocomplete_dropdown'),
-                    suggestions: _suggestions,
-                    onSelect: _onSuggestionSelected,
-                  ),
                 _MessageInput(
                       controller: _messageController,
                       focusNode: _focusNode,

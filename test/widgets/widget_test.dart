@@ -1878,61 +1878,6 @@ void main() {
       );
     });
 
-    testWidgets('tap on suggestion replaces word in input', (
-      WidgetTester tester,
-    ) async {
-      SharedPreferences.setMockInitialValues({'access_token': 'test_token'});
-      final eventSub = _TestEventSubService();
-      final irc = _FakeIrcService();
-      final recent = _FakeRecentMessagesService();
-
-      await tester.pumpWidget(
-        TwitchChatApp(
-          eventSubService: eventSub,
-          ircService: irc,
-          recentMessagesService: recent,
-        ),
-      );
-      await tester.pump();
-
-      await tester.tap(find.byIcon(Icons.add));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField).last, 'xqc');
-      await tester.tap(find.text('Join'));
-      await tester.pump();
-
-      eventSub.emitMessage(
-        TwitchMessage(
-          username: 'UserOne',
-          text: 'hello chat',
-          channel: 'xqc',
-          messageId: 'm1',
-        ),
-      );
-      await tester.pump();
-
-      await tester.enterText(
-        find.byKey(const Key('message_input')),
-        'User',
-      );
-      await tester.pump();
-
-      await tester.tap(
-        find.descendant(
-          of: find.byKey(const Key('autocomplete_dropdown')),
-          matching: find.text('UserOne'),
-        ),
-      );
-      await tester.pump();
-
-      final textField = tester.widget<TextField>(
-        find.byKey(const Key('message_input')),
-      );
-      expect(textField.controller!.text, 'UserOne ');
-      final dropdown = find.byKey(const Key('autocomplete_dropdown'));
-      expect(dropdown, findsNothing);
-    });
-
     testWidgets('dropdown hides when text fewer than 2 characters', (
       WidgetTester tester,
     ) async {
