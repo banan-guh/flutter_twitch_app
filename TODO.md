@@ -26,8 +26,9 @@
 
 ## Bugs
 
+- [ ] **Timeout not showing** - both as system message and 35% opacity message.
 - [ ] **Emotes aren't rendered as text** - when emotes aren't loaded yet, the correct behaviour should show the emote as text first (0-width not shown as text unless they aren't overlapping anything), then replace the text with the emote when loaded. Not high-priority but would be nice to fix.
-- [ ] **IRC fallback creates unreachable pending** — When `_channelUserIds[channel]` is null (e.g. `_subscribeChannel` failed silently), `_doSendMessage` falls through to IRC with a pending entry that has no `_pendingByMessageId` mapping. EventSub can never match it, so the message stays "unconfirmed" permanently. Fix: queue until `broadcasterId` resolves, or skip pending creation when Helix path isn't available. See `home_screen.dart:913`.
+- [x] **IRC fallback creates unreachable pending** — When `_channelUserIds[channel]` is null (e.g. `_subscribeChannel` failed silently), `_doSendMessage` falls through to IRC with a pending entry that has no `_pendingByMessageId` mapping. EventSub can never match it, so the message stays "unconfirmed" permanently. Fix: queue until `broadcasterId` resolves, or skip pending creation when Helix path isn't available. See `home_screen.dart:913`.
 - [x] **White highlight of notifications** — If notifications appear (e.g. system messages, whispers, mentions), they light up with white highlight. Not sure what causes this; need to investigate.
 - [x] **Fix Twitch emote rendering** — Emotes display incorrectly. Investigate emote parsing, URL generation, or image sizing to get them rendering properly.
 - [ ] **Fix 7TV system messages** — 7TV emotes/system messages not rendering correctly. Investigate and fix.
