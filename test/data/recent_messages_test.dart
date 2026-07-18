@@ -115,5 +115,14 @@ void main() {
       expect(msg.emotePositions!.first.startIndex, 6);
       expect(msg.emotePositions!.first.endIndex, 13);
     });
+
+    test('parses single-word message without trailing colon', () {
+      const raw =
+          '@display-name=testuser;id=single-1;rm-received-ts=1700000000000 :testuser!testuser@testuser.tmi.twitch.tv PRIVMSG #xqc eerm';
+      final msg = RecentMessagesService.parseIrcLine(raw);
+      expect(msg, isNotNull);
+      expect(msg!.username, 'testuser');
+      expect(msg.text, 'eerm');
+    });
   });
 }

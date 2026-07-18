@@ -3233,11 +3233,14 @@ class _MentionsPanelWidgetState extends State<_MentionsPanelWidget> {
               Divider(height: 1, color: theme.dividerColor),
               Expanded(
                 child: messageList.isEmpty
-                    ? ListView(
+                    ? CustomScrollView(
                         controller: widget.scrollController,
-                        padding: const EdgeInsets.only(bottom: 8),
-                        children: const [
-                          Center(child: Text('No mentions or whispers')),
+                        slivers: const [
+                          SliverFillRemaining(
+                            hasScrollBody: false,
+                            child: Center(
+                                child: Text('No mentions or whispers')),
+                          ),
                         ],
                       )
                     : ListView.builder(

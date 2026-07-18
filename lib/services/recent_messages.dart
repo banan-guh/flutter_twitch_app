@@ -61,8 +61,9 @@ class RecentMessagesService {
     if (targetEnd == -1) return null;
     idx = targetEnd + 1;
 
-    if (idx >= raw.length || raw[idx] != ':') return null;
-    final text = raw.substring(idx + 1);
+    final text = (idx < raw.length && raw[idx] == ':')
+        ? raw.substring(idx + 1)
+        : raw.substring(idx);
 
     final tags = _parseTags(tagsPart ?? '');
     final username = tags['display-name'] ?? '';
