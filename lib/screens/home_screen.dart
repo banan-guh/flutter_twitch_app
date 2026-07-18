@@ -1514,25 +1514,47 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// Wraps [child] so it renders at its full expanded height bottom-aligned
-  /// within the sheet's current box.
+  /// Wraps [child] so it renders at its full expanded height and translates
+  /// vertically as the sheet opens/closes — true slide-up/down motion.
   ///
-  /// As the sheet grows from 0 → [maxSize], more of the content becomes visible
-  /// from the bottom up — a true slide-up reveal.
+  /// At size = 0 the content is shifted down by its full height (invisible
+  /// below the viewport). As the sheet grows to [maxSize] the content rises
+  /// into view, bottom-anchored.
   ///
   /// [totalAvailH] is the pixel height of the Positioned area that the sheet
   /// occupies. Captured once per layout from a LayoutBuilder wrapping the sheet.
+  ///
+  /// Uses [OverflowBox] so the child always lays out at full height regardless
+  /// of sheet box size, preventing Column overflow during animation. [ClipRect]
+  /// clips to the sheet box boundary. [AnimatedBuilder] and [FractionalTranslation]
+  /// drive the per-frame offset.
   Widget _buildSlideUpContent({
+    required DraggableScrollableController controller,
     required double totalAvailH,
     required double maxSize,
     required Widget child,
   }) {
     final contentH = maxSize * totalAvailH;
-    return Align(
-      alignment: Alignment.bottomCenter,
-      child: SizedBox(
-        height: contentH,
-        child: child,
+    return ClipRect(
+      child: OverflowBox(
+        alignment: Alignment.bottomCenter,
+        minHeight: contentH,
+        maxHeight: contentH,
+        child: AnimatedBuilder(
+          animation: controller,
+          builder: (context, child) {
+            final size = controller.isAttached ? controller.size : 0.0;
+            final closedFraction =
+                maxSize <= 0
+                    ? 0.0
+                    : (1 - (size / maxSize)).clamp(0.0, 1.0);
+            return FractionalTranslation(
+              translation: Offset(0, closedFraction),
+              child: child!,
+            );
+          },
+          child: child,
+        ),
       ),
     );
   }
@@ -1819,6 +1841,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 builder: (context, scrollController) {
                                   final sheetTheme = Theme.of(context);
                                   return _buildSlideUpContent(
+                                    controller: _threadSheetCtrl,
                                     totalAvailH: totalAvailH,
                                     maxSize: _fullHeightFraction,
                                     child: RepaintBoundary(
@@ -1864,6 +1887,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 builder: (context, scrollController) {
                                   final sheetTheme = Theme.of(context);
                                   return _buildSlideUpContent(
+                                    controller: _mentionsSheetCtrl,
                                     totalAvailH: totalAvailH,
                                     maxSize: _fullHeightFraction,
                                     child: RepaintBoundary(
@@ -1911,6 +1935,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 builder: (context, scrollController) {
                                   final sheetTheme = Theme.of(context);
                                   return _buildSlideUpContent(
+                                    controller: _emoteSheetCtrl,
                                     totalAvailH: totalAvailH,
                                     maxSize: emoteMaxSize,
                                     child: RepaintBoundary(
