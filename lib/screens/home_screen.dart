@@ -3468,24 +3468,16 @@ class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
 
   Widget _buildEmoteRecentGrid(ScrollController? scrollController) {
     if (!_recentEmotesLoaded) {
-      return scrollController != null
-          ? ListView(
-              controller: scrollController,
-              children: const [
-                Center(child: CircularProgressIndicator(strokeWidth: 2)),
-              ],
-            )
-          : const Center(child: CircularProgressIndicator(strokeWidth: 2));
+      return _buildEmoteEmptyState(
+        scrollController,
+        const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
     }
     if (_cachedRecentEmotes.isEmpty) {
-      return scrollController != null
-          ? ListView(
-              controller: scrollController,
-              children: const [
-                Center(child: Text('No recently used emotes')),
-              ],
-            )
-          : const Center(child: Text('No recently used emotes'));
+      return _buildEmoteEmptyState(
+        scrollController,
+        const Center(child: Text('No recently used emotes')),
+      );
     }
     return _buildEmoteGrid(_cachedRecentEmotes, scrollController);
   }
@@ -3493,14 +3485,10 @@ class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
   Widget _buildEmoteSubsGrid(ScrollController? scrollController) {
     final byChannel = widget.emoteManager.subscriberEmotesByChannel();
     if (byChannel.isEmpty) {
-      return scrollController != null
-          ? ListView(
-              controller: scrollController,
-              children: const [
-                Center(child: Text('No subscriber emotes available')),
-              ],
-            )
-          : const Center(child: Text('No subscriber emotes available'));
+      return _buildEmoteEmptyState(
+        scrollController,
+        const Center(child: Text('No subscriber emotes available')),
+      );
     }
     return CustomScrollView(
       controller: scrollController,
@@ -3539,14 +3527,10 @@ class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
     final channel = widget.selectedChannel ?? '';
     final emotes = widget.emoteManager.channelNonTwitchEmotes(channel);
     if (emotes.isEmpty) {
-      return scrollController != null
-          ? ListView(
-              controller: scrollController,
-              children: const [
-                Center(child: Text('No channel emotes')),
-              ],
-            )
-          : const Center(child: Text('No channel emotes'));
+      return _buildEmoteEmptyState(
+        scrollController,
+        const Center(child: Text('No channel emotes')),
+      );
     }
     return _buildEmoteGrid(emotes, scrollController);
   }
@@ -3554,16 +3538,29 @@ class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
   Widget _buildEmoteGlobalGrid(ScrollController? scrollController) {
     final emotes = widget.emoteManager.globalEmotes();
     if (emotes.isEmpty) {
-      return scrollController != null
-          ? ListView(
-              controller: scrollController,
-              children: const [
-                Center(child: Text('No global emotes')),
-              ],
-            )
-          : const Center(child: Text('No global emotes'));
+      return _buildEmoteEmptyState(
+        scrollController,
+        const Center(child: Text('No global emotes')),
+      );
     }
     return _buildEmoteGrid(emotes, scrollController);
+  }
+
+  /// Keeps [scrollController] attached (so [DraggableScrollableController]
+  /// stays usable) while ensuring [child] fills the viewport via
+  /// [SliverFillRemaining] — otherwise a bare [Center] inside [ListView]
+  /// shrink-wraps to its child and sits at the top.
+  Widget _buildEmoteEmptyState(
+    ScrollController? scrollController,
+    Widget child,
+  ) {
+    if (scrollController == null) return child;
+    return CustomScrollView(
+      controller: scrollController,
+      slivers: [
+        SliverFillRemaining(child: child),
+      ],
+    );
   }
 
   Widget _buildEmoteGrid(
