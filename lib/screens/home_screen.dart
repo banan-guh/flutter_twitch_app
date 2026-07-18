@@ -14,6 +14,7 @@ import '../services/twitch_irc_read.dart';
 import '../services/recent_messages.dart';
 import '../services/emote_manager.dart';
 import '../services/twitch_badge_service.dart';
+import '../services/emote_providers/twitch_emotes.dart';
 import '../widgets/settings.dart';
 import '../widgets/emote_text.dart';
 import '../widgets/chat_message_tile.dart';
@@ -104,6 +105,7 @@ class _HomeScreenState extends State<HomeScreen> {
   StreamSubscription<IrcNoticeEvent>? _ircJtvSub;
   StreamSubscription<IrcMessage>? _ircOwnMsgSub;
   StreamSubscription<String>? _userColorSub;
+  StreamSubscription<List<String>>? _globalEmoteSetsSub;
 
   final _ownMessageIds = <String>{};
   int _localCounter = 0;
@@ -261,7 +263,6 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       _emoteManager.evictGlobal();
       _emoteManager.preloadGlobalEmotes();
-      await _loadUserTwitchEmotes();
       _badgeService.dispose();
       _badgeService.fetchGlobalBadges(widget.twitchAuth);
       for (final channel in _channels) {
@@ -278,18 +279,53 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _loadUserTwitchEmotes() async {
+  Future<void> _onGlobalEmoteSets(List<String> setIds) async {
     final auth = widget.twitchAuth;
     if (!auth.isConfigured) return;
-    final reverse = <String, String>{};
-    for (final entry in _channelUserIds.entries) {
-      reverse[entry.value] = entry.key;
-    }
-    if (reverse.isEmpty) return;
-    await _emoteManager.loadUserTwitchEmotes(
+    final filtered = setIds.where((id) => id != '0').toList();
+    if (filtered.isEmpty) return;
+    final byOwner = await TwitchEmoteProvider.fetchEmoteSets(
+      filtered,
       accessToken: auth.accessToken,
-      userIdToChannel: reverse,
     );
+    if (byOwner.isEmpty) return;
+    final userIdToChannel = <String, String>{};
+    for (final entry in _channelUserIds.entries) {
+      userIdToChannel[entry.value] = entry.key;
+    }
+    final unknownIds = <String>[];
+    for (final ownerId in byOwner.keys) {
+      if (!userIdToChannel.containsKey(ownerId)) {
+        unknownIds.add(ownerId);
+      }
+    }
+    if (unknownIds.isNotEmpty) {
+      for (final id in unknownIds) {
+        final login = await TwitchApi.getUserLoginById(auth, id);
+        if (login != null) {
+          userIdToChannel[id] = login;
+        }
+      }
+    }
+    final perChannel = <String, List<GenericEmote>>{};
+    for (final entry in byOwner.entries) {
+      final channel = userIdToChannel[entry.key];
+      if (channel == null) continue;
+      perChannel[channel] = entry.value
+          .map((e) => GenericEmote(
+                id: e.id,
+                code: e.code,
+                type: e.type,
+                url: e.url,
+                scope: e.scope,
+                tier: e.tier,
+                ownerChannel: channel,
+              ))
+          .toList();
+    }
+    if (perChannel.isNotEmpty) {
+      await _emoteManager.storeUserTwitchEmotes(perChannel);
+    }
   }
 
   void _loadMaxMessages() async {
@@ -398,6 +434,9 @@ class _HomeScreenState extends State<HomeScreen> {
       _currentUserColor = color;
     });
 
+    _globalEmoteSetsSub?.cancel();
+    _globalEmoteSetsSub = _ircRead.onGlobalEmoteSets.listen(_onGlobalEmoteSets);
+
     if (!auth.isConfigured) return;
 
     _statusSub?.cancel();
@@ -412,7 +451,6 @@ class _HomeScreenState extends State<HomeScreen> {
         await Future.delayed(const Duration(milliseconds: 500));
         try {
           await _subscribeAll();
-          await _loadUserTwitchEmotes();
         } catch (_) {}
         for (final channel in _channels) {
           if (_historyLoaded.contains(channel)) {
@@ -464,6 +502,19 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (msg.messageId != null &&
         _messageKeys.containsKey('$channel:${msg.messageId}')) {
+      // EventSub may deliver our own message with emote fragments that the
+      // local optimistic insert didn't have. Replace to get proper rendering.
+      final existing = _channelMessages[channel];
+      if (msg.emotePositions != null && existing != null) {
+        final idx = existing.indexWhere(
+          (m) => m.messageId == msg.messageId,
+        );
+        if (idx != -1) {
+          existing[idx] = msg;
+          _chatVersion.value++;
+          if (mounted) setState(() {});
+        }
+      }
       return;
     }
 
@@ -600,6 +651,36 @@ class _HomeScreenState extends State<HomeScreen> {
         ? ircMsg.tags['color']!
         : pickColor(displayName.toLowerCase());
 
+    List<EmotePosition>? emotePositions;
+    final emotesTag = ircMsg.tags['emotes'];
+    if (emotesTag != null && emotesTag.isNotEmpty) {
+      emotePositions = [];
+      for (final emoteEntry in emotesTag.split('/')) {
+        final colonIdx = emoteEntry.indexOf(':');
+        if (colonIdx == -1) continue;
+        final emoteId = emoteEntry.substring(0, colonIdx);
+        final positionsStr = emoteEntry.substring(colonIdx + 1);
+        for (final posStr in positionsStr.split(',')) {
+          final dashIdx = posStr.indexOf('-');
+          if (dashIdx == -1) continue;
+          final start = int.tryParse(posStr.substring(0, dashIdx));
+          final end = int.tryParse(posStr.substring(dashIdx + 1));
+          if (start == null || end == null) continue;
+          if (start < 0 || end >= text.length) continue;
+          final emoteCode = text.substring(start, end + 1);
+          emotePositions.add(
+            EmotePosition(
+              emoteId: emoteId,
+              startIndex: start,
+              endIndex: end + 1,
+              emoteCode: emoteCode,
+            ),
+          );
+        }
+      }
+      if (emotePositions.isEmpty) emotePositions = null;
+    }
+
     final msg = TwitchMessage(
       username: displayName,
       text: text,
@@ -611,6 +692,7 @@ class _HomeScreenState extends State<HomeScreen> {
       replyToParentId: pendingMsg?.replyToParentId,
       replyToUser: pendingMsg?.replyToUser,
       replyToText: pendingMsg?.replyToText,
+      emotePositions: emotePositions,
     );
 
     _channelMessages.putIfAbsent(channel, () => []);

@@ -20,9 +20,11 @@ class IrcReadService {
 
   final _ownMessageController = StreamController<IrcMessage>.broadcast();
   final _userColorController = StreamController<String>.broadcast();
+  final _globalEmoteSetsController = StreamController<List<String>>.broadcast();
 
   Stream<IrcMessage> get onOwnMessage => _ownMessageController.stream;
   Stream<String> get onUserColor => _userColorController.stream;
+  Stream<List<String>> get onGlobalEmoteSets => _globalEmoteSetsController.stream;
 
   bool get isConnected => _channel != null;
 
@@ -141,6 +143,12 @@ class IrcReadService {
           if (color != null && color.isNotEmpty) {
             _userColorController.add(color);
           }
+          if (line.contains('GLOBALUSERSTATE')) {
+            final sets = msg.tags['emote-sets'];
+            if (sets != null && sets.isNotEmpty) {
+              _globalEmoteSetsController.add(sets.split(','));
+            }
+          }
         }
         continue;
       }
@@ -182,5 +190,6 @@ class IrcReadService {
     _channel?.sink.close();
     _ownMessageController.close();
     _userColorController.close();
+    _globalEmoteSetsController.close();
   }
 }

@@ -69,7 +69,7 @@ class EmoteManager extends ChangeNotifier {
 
   Map<String, List<GenericEmote>> subscriberEmotesByChannel() {
     final result = <String, List<GenericEmote>>{};
-    final keys = _channelCaches.keys.toList()..sort();
+    final keys = _channelTwitchEmotes.keys.toList()..sort();
     for (final channel in keys) {
       final raw = _channelTwitchEmotes[channel];
       if (raw == null) continue;
@@ -155,38 +155,30 @@ class EmoteManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> loadUserTwitchEmotes({
-    required String? accessToken,
-    required Map<String, String> userIdToChannel,
-  }) async {
-    if (accessToken == null) return;
-    final byOwner = await TwitchEmoteProvider.fetchAllUserEmotes(
-      accessToken: accessToken,
-    );
-    if (byOwner.isEmpty) return;
-    for (final entry in byOwner.entries) {
-      final channel = userIdToChannel[entry.key];
-      if (channel == null) continue;
-      final withChannel = entry.value
-          .map((e) => GenericEmote(
-                id: e.id,
-                code: e.code,
-                type: e.type,
-                url: e.url,
-                scope: e.scope,
-                tier: e.tier,
-                ownerChannel: channel,
-              ))
-          .toList();
+  Future<void> storeUserTwitchEmotes(
+    Map<String, List<GenericEmote>> perChannel,
+  ) async {
+    for (final entry in perChannel.entries) {
+      final channel = entry.key;
+      final emotes = entry.value;
+      if (emotes.isEmpty) continue;
       final existing = _channelTwitchEmotes[channel] ?? [];
       final merged = <GenericEmote>[
         for (final e in existing)
           if (e.tier == null) e,
-        ...withChannel,
+        ...emotes,
       ];
       _channelTwitchEmotes[channel] = merged;
+      final existingCache = _channelCaches[channel];
+      final allEmotes = <GenericEmote>[
+        ...merged,
+        if (existingCache != null)
+          for (final e in existingCache.suggestions)
+            if (e.type != EmoteType.twitch) e,
+      ];
+      _channelCaches[channel] = _buildChannelMap(allEmotes);
       debugPrint(
-        'EmoteManager: loaded ${withChannel.length} user Twitch emotes '
+        'EmoteManager: stored ${emotes.length} user Twitch emotes '
         'for $channel (subs: ${merged.where((e) => e.tier != null).length})',
       );
     }

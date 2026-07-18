@@ -33,6 +33,20 @@ class TwitchApi {
     return list[0]['id'] as String;
   }
 
+  static Future<String?> getUserLoginById(TwitchAuth auth, String userId) async {
+    _lastError = null;
+    final uri = Uri.parse('$_base/users?id=$userId');
+    final res = await _client.get(uri, headers: _headers(auth));
+    if (res.statusCode != 200) {
+      _setError('getUserLoginById', res);
+      return null;
+    }
+    final data = jsonDecode(res.body) as Map;
+    final list = data['data'] as List;
+    if (list.isEmpty) return null;
+    return list[0]['login'] as String;
+  }
+
   /// Returns `{'id': ..., 'login': ...}` for the authenticated user.
   static Future<Map<String, String>?> getCurrentUser(TwitchAuth auth) async {
     _lastError = null;
