@@ -118,7 +118,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _onSheetSizeChanged(OverlayPanel panel, DraggableScrollableController ctrl) {
     // When the user drags a sheet down to size 0, close the panel.
-    debugPrint('[SHEET_SIZE] panel=$panel size=${ctrl.isAttached ? ctrl.size : "detached"} activePanel=$_activePanel');
     if (_activePanel == panel && ctrl.isAttached && ctrl.size <= 0.001) {
       setState(() {
         _activePanel = OverlayPanel.closed;
@@ -1469,7 +1468,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final keyboardUp = MediaQuery.of(context).viewInsets.bottom > 0;
     if (_activePanel != OverlayPanel.closed) await _closePanel();
     _emoteSheetMaxSize = keyboardUp ? _fullHeightFraction : _emoteMaxFraction;
-    debugPrint('[EMOTE_OPEN] keyboardUp=$keyboardUp _emoteSheetMaxSize=$_emoteSheetMaxSize activePanel=$_activePanel');
     setState(() => _activePanel = OverlayPanel.emotes);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _emoteSheetCtrl.isAttached) {
@@ -1924,7 +1922,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: LayoutBuilder(
                           builder: (context, constraints) {
                             final totalAvailH = constraints.maxHeight;
-                            debugPrint('[EMOTE_BUILDER] _emoteSheetMaxSize=$_emoteSheetMaxSize totalAvailH=$totalAvailH activePanel=$_activePanel');
                             return IgnorePointer(
                               ignoring: _activePanel != OverlayPanel.emotes,
                               child: DraggableScrollableSheet(
