@@ -105,7 +105,6 @@ class _HomeScreenState extends State<HomeScreen> {
   StreamSubscription<IrcNoticeEvent>? _ircJtvSub;
   StreamSubscription<IrcMessage>? _ircOwnMsgSub;
   StreamSubscription<String>? _userColorSub;
-  StreamSubscription<List<String>>? _globalEmoteSetsSub;
 
   final _ownMessageIds = <String>{};
   int _localCounter = 0;
@@ -117,6 +116,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _lastSentText;
   bool _wasConnected = false;
   bool _wasDisconnected = false;
+  bool _userTwitchEmotesLoaded = false;
   EventSubStatus _connectionStatus = EventSubStatus.disconnected;
 
   void _onSheetSizeChanged(OverlayPanel panel, DraggableScrollableController ctrl) {
@@ -267,25 +267,30 @@ class _HomeScreenState extends State<HomeScreen> {
       _badgeService.fetchGlobalBadges(widget.twitchAuth);
       for (final channel in _channels) {
         _emoteManager.evictChannel(channel);
-        _emoteManager.resolveEmotes(channel, _channelUserIds[channel]);
         final userId = _channelUserIds[channel];
         if (userId != null) {
           _badgeService.fetchChannelBadges(widget.twitchAuth, userId, channel);
         }
       }
+      await Future.wait(
+        _channels.map(
+          (c) => _emoteManager.resolveEmotes(c, _channelUserIds[c]),
+        ),
+      );
+      _userTwitchEmotesLoaded = false;
+      unawaited(_loadUserTwitchEmotes());
     } catch (e) {
       debugPrint('_refreshEmotesAfterAuth failed: $e');
     }
     if (mounted) setState(() {});
   }
 
-  Future<void> _onGlobalEmoteSets(List<String> setIds) async {
+  Future<void> _loadUserTwitchEmotes() async {
     final auth = widget.twitchAuth;
-    if (!auth.isConfigured) return;
-    final filtered = setIds.where((id) => id != '0').toList();
-    if (filtered.isEmpty) return;
-    final byOwner = await TwitchEmoteProvider.fetchEmoteSets(
-      filtered,
+    final userId = _currentUserId;
+    if (!auth.isConfigured || userId == null) return;
+    final byOwner = await TwitchEmoteProvider.fetchUserEmotes(
+      userId: userId,
       accessToken: auth.accessToken,
     );
     if (byOwner.isEmpty) return;
@@ -295,20 +300,18 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     final unknownIds = <String>[];
     for (final ownerId in byOwner.keys) {
+      if (ownerId.isEmpty) continue;
       if (!userIdToChannel.containsKey(ownerId)) {
         unknownIds.add(ownerId);
       }
     }
     if (unknownIds.isNotEmpty) {
-      for (final id in unknownIds) {
-        final login = await TwitchApi.getUserLoginById(auth, id);
-        if (login != null) {
-          userIdToChannel[id] = login;
-        }
-      }
+      final resolved = await TwitchApi.getUserLoginsByIds(auth, unknownIds);
+      userIdToChannel.addAll(resolved);
     }
     final perChannel = <String, List<GenericEmote>>{};
     for (final entry in byOwner.entries) {
+      if (entry.key.isEmpty) continue;
       final channel = userIdToChannel[entry.key];
       if (channel == null) continue;
       perChannel[channel] = entry.value
@@ -319,6 +322,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 url: e.url,
                 scope: e.scope,
                 tier: e.tier,
+                emoteType: e.emoteType,
                 ownerChannel: channel,
               ))
           .toList();
@@ -434,9 +438,6 @@ class _HomeScreenState extends State<HomeScreen> {
       _currentUserColor = color;
     });
 
-    _globalEmoteSetsSub?.cancel();
-    _globalEmoteSetsSub = _ircRead.onGlobalEmoteSets.listen(_onGlobalEmoteSets);
-
     if (!auth.isConfigured) return;
 
     _statusSub?.cancel();
@@ -451,6 +452,10 @@ class _HomeScreenState extends State<HomeScreen> {
         await Future.delayed(const Duration(milliseconds: 500));
         try {
           await _subscribeAll();
+          if (!_userTwitchEmotesLoaded) {
+            _userTwitchEmotesLoaded = true;
+            unawaited(_loadUserTwitchEmotes());
+          }
         } catch (_) {}
         for (final channel in _channels) {
           if (_historyLoaded.contains(channel)) {
@@ -1046,6 +1051,11 @@ class _HomeScreenState extends State<HomeScreen> {
         if (currentUser == null) return;
         _currentUserLogin = currentUser['login'];
         _currentUserId = currentUser['id'];
+      }
+
+      if (!_userTwitchEmotesLoaded) {
+        _userTwitchEmotesLoaded = true;
+        unawaited(_loadUserTwitchEmotes());
       }
 
       _eventSub.setChannelMapping(channelUserId, channelName);
@@ -3590,10 +3600,6 @@ class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
 
   Widget _buildEmoteSubsGrid(ScrollController? scrollController) {
     final byChannel = widget.emoteManager.subscriberEmotesByChannel();
-    debugPrint(
-      '_buildEmoteSubsGrid: ${byChannel.length} channels with subs, '
-      'total emotes: ${byChannel.values.fold<int>(0, (s, l) => s + l.length)}',
-    );
     if (byChannel.isEmpty) {
       return _buildEmoteEmptyState(
         scrollController,

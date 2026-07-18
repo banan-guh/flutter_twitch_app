@@ -11,6 +11,7 @@ class GenericEmote {
   final EmoteScope scope;
   final String? ownerChannel;
   final String? tier;
+  final String? emoteType;
   final bool isZeroWidth;
   final double relativeScale;
   final double aspectRatio;
@@ -24,6 +25,7 @@ class GenericEmote {
     this.scope = EmoteScope.global,
     this.ownerChannel,
     this.tier,
+    this.emoteType,
     this.isZeroWidth = false,
     this.relativeScale = 1.0,
     this.aspectRatio = 1.0,
@@ -38,6 +40,7 @@ class GenericEmote {
     'scope': scope.index,
     'ownerChannel': ownerChannel,
     'tier': tier,
+    'emoteType': emoteType,
     'isZeroWidth': isZeroWidth,
     'relativeScale': relativeScale,
     'aspectRatio': aspectRatio,
@@ -52,6 +55,7 @@ class GenericEmote {
     scope: EmoteScope.values[json['scope'] as int? ?? 0],
     ownerChannel: json['ownerChannel'] as String?,
     tier: json['tier'] as String?,
+    emoteType: json['emoteType'] as String?,
     isZeroWidth: json['isZeroWidth'] as bool? ?? false,
     relativeScale: (json['relativeScale'] as num?)?.toDouble() ?? 1.0,
     aspectRatio: (json['aspectRatio'] as num?)?.toDouble() ?? 1.0,

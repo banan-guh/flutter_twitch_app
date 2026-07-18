@@ -73,7 +73,9 @@ class EmoteManager extends ChangeNotifier {
     for (final channel in keys) {
       final raw = _channelTwitchEmotes[channel];
       if (raw == null) continue;
-      final subs = raw.where((e) => e.tier != null).toList()
+      final subs = raw
+          .where((e) => e.emoteType == 'subscriptions' || e.tier != null)
+          .toList()
         ..sort((a, b) => a.code.compareTo(b.code));
       if (subs.isNotEmpty) result[channel] = subs;
     }
@@ -179,7 +181,7 @@ class EmoteManager extends ChangeNotifier {
       _channelCaches[channel] = _buildChannelMap(allEmotes);
       debugPrint(
         'EmoteManager: stored ${emotes.length} user Twitch emotes '
-        'for $channel (subs: ${merged.where((e) => e.tier != null).length})',
+        'for $channel (subs: ${merged.where((e) => e.emoteType == 'subscriptions').length})',
       );
     }
     notifyListeners();
@@ -202,8 +204,7 @@ class EmoteManager extends ChangeNotifier {
         .where((e) => e.type == EmoteType.twitch)
         .toList();
     debugPrint(
-      'EmoteManager: $_channelTwitchEmotes[channel].length Twitch emotes '
-      'for $channel (subs: ${_channelTwitchEmotes[channel]!.where((e) => e.tier != null).length})',
+      'EmoteManager: resolved ${_channelTwitchEmotes[channel]!.length} Twitch emotes for $channel',
     );
     final map = _buildChannelMap(emotes);
     _channelCaches[channel] = map;
@@ -272,9 +273,6 @@ class EmoteManager extends ChangeNotifier {
     String? broadcasterId, {
     String? channelName,
   }) async {
-    debugPrint(
-      'EmoteManager: _fetchAllChannel broadcasterId=$broadcasterId channel=$channelName',
-    );
     if (broadcasterId == null) return [];
     final all = <GenericEmote>[];
     await _fetchProvider(
