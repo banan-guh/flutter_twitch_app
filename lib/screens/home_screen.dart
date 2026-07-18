@@ -21,6 +21,9 @@ import '../widgets/chat_message_tile.dart';
 import '../widgets/tabbed_layout.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../color_utils.dart';
+import '../services/user_store.dart';
+import '../services/suggestion.dart';
+import '../widgets/autocomplete_dropdown.dart';
 
 enum OverlayPanel { closed, thread, mentions, emotes }
 
@@ -61,6 +64,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   final _emoteManager = EmoteManager();
   final _badgeService = TwitchBadgeService();
+  final _userStore = UserStore();
   final _channels = <String>[];
   final _channelNotifier = ValueNotifier<List<String>>([]);
   final _chatVersion = ValueNotifier(0);
@@ -84,6 +88,8 @@ class _HomeScreenState extends State<HomeScreen> {
   OverlayPanel _activePanel = OverlayPanel.closed;
   int _maxMessagesPerChannel = 200;
   double _uiScale = 1.0;
+
+  List<Suggestion> _suggestions = [];
 
   late final DraggableScrollableController _threadSheetCtrl;
   late final DraggableScrollableController _mentionsSheetCtrl;
@@ -161,6 +167,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _badgeService.fetchGlobalBadges(widget.twitchAuth);
     widget.twitchAuth.addListener(_onAuthChanged);
     _focusNode.addListener(_onInputFocusChanged);
+    _messageController.addListener(_onInputChanged);
   }
 
   Future<void> _saveChannels() async {
@@ -224,6 +231,48 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_activePanel == OverlayPanel.emotes) {
       _closePanel();
     }
+  }
+
+  void _onInputChanged() {
+    final text = _messageController.text;
+    final cursor = _messageController.selection.baseOffset;
+    final word = getCurrentWord(text, cursor);
+    if (word.text.length < 2) {
+      if (_suggestions.isNotEmpty) {
+        setState(() {
+          _suggestions = [];
+        });
+      }
+      return;
+    }
+    final channel = _selectedChannel;
+    if (channel == null) return;
+    final channelEmotes = _emoteManager.byCode(channel);
+    final emotes = channelEmotes?.suggestions ?? [];
+    final users = _userStore.usersForChannel(channel);
+    final filtered = filterSuggestions(
+      word: word.text,
+      emotes: emotes,
+      users: users,
+    );
+    setState(() {
+      _suggestions = filtered;
+    });
+  }
+
+  void _onSuggestionSelected(Suggestion suggestion) {
+    final replacement = switch (suggestion) {
+      UserSuggestion() => suggestion.displayName,
+      EmoteSuggestion() => suggestion.emote.code,
+    };
+    replaceCurrentWord(_messageController, replacement);
+    if (suggestion is EmoteSuggestion) {
+      _emoteManager.markEmoteUsed(suggestion.emote);
+    }
+    setState(() {
+      _suggestions = [];
+    });
+    _focusNode.requestFocus();
   }
 
   void _onEmotesChanged() {
@@ -502,6 +551,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _onMessage(TwitchMessage msg) {
     if (!mounted) return;
+
+    if (!msg.isSystem && msg.username.isNotEmpty && msg.channel != null) {
+      _userStore.addUser(msg.channel!, msg.username);
+    }
+
     final channel = msg.channel;
     if (channel == null) return;
 
@@ -611,6 +665,12 @@ class _HomeScreenState extends State<HomeScreen> {
         : null;
     if (channel == null || ircMsg.trailing == null) return;
 
+    final displayName =
+        ircMsg.tags['display-name']?.trim() ?? _currentUserLogin ?? '';
+    if (displayName.isNotEmpty) {
+      _userStore.addUser(channel, displayName);
+    }
+
     final colorTag = ircMsg.tags['color'];
     if (colorTag != null && colorTag.isNotEmpty) {
       _currentUserColor = colorTag;
@@ -648,8 +708,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ? DateTime.fromMillisecondsSinceEpoch(int.parse(tsMs), isUtc: true)
         : DateTime.now().toUtc();
 
-    final displayName =
-        ircMsg.tags['display-name']?.trim() ?? _currentUserLogin ?? '';
     final userId = ircMsg.tags['user-id'] ?? _currentUserId;
     final color =
         ircMsg.tags['color'] != null && ircMsg.tags['color']!.isNotEmpty
@@ -1156,8 +1214,8 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _channels.remove(channel);
       _channelNotifier.value = List.of(_channels);
-      _channelMessages.remove(channel);
-      _isAtBottom.remove(channel);
+    _channelMessages.remove(channel);
+    _userStore.removeChannel(channel);
       _scrollControllers.remove(channel)?.dispose();
       _channelsWithUnread.remove(channel);
       _channelsWithUnreadMentions.remove(channel);
@@ -1173,6 +1231,12 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _sendMessage() {
+    if (_suggestions.isNotEmpty) {
+      setState(() {
+        _suggestions = [];
+      });
+    }
+
     final text = _messageController.text.trim();
     final channel = _selectedChannel;
     if (text.isEmpty ||
@@ -1743,8 +1807,10 @@ class _HomeScreenState extends State<HomeScreen> {
         _activePanel = OverlayPanel.closed;
       }
       _openThreadRoot = null;
+      if (_suggestions.isNotEmpty) {
+        _suggestions = [];
+      }
     });
-    // Close any open sheet.
     _closePanel();
   }
 
@@ -2081,9 +2147,15 @@ class _HomeScreenState extends State<HomeScreen> {
               child: ColoredBox(
                 color: theme.scaffoldBackgroundColor,
                 child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _MessageInput(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_suggestions.isNotEmpty)
+                  AutocompleteDropdown(
+                    key: const Key('autocomplete_dropdown'),
+                    suggestions: _suggestions,
+                    onSelect: _onSuggestionSelected,
+                  ),
+                _MessageInput(
                       controller: _messageController,
                       focusNode: _focusNode,
                       onSend: _sendMessage,
