@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io' show Platform;
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -14,6 +13,8 @@ import '../services/twitch_eventsub.dart';
 import '../services/twitch_irc.dart';
 import '../services/twitch_irc_read.dart';
 import '../services/recent_messages.dart';
+import '../services/command_handler.dart';
+import '../services/chat_connection_manager.dart';
 import '../services/emote_manager.dart';
 import '../services/twitch_badge_service.dart';
 import '../services/emote_providers/twitch_emotes.dart';
@@ -26,7 +27,12 @@ import '../color_utils.dart';
 import '../services/user_store.dart';
 import '../services/suggestion.dart';
 import '../widgets/autocomplete_dropdown.dart';
-import '../util/text_bypass.dart';
+import '../widgets/user_profile_sheet.dart';
+import '../widgets/emote_sheet.dart';
+import '../widgets/message_input.dart';
+import '../widgets/thread_panel.dart';
+import '../widgets/mentions_panel.dart';
+import '../widgets/emote_menu_panel.dart';
 import '../services/foreground_task.dart';
 
 enum OverlayPanel { closed, thread, mentions, emotes }
@@ -64,6 +70,62 @@ class _HomeScreenState extends State<HomeScreen>
   late final _ircRead = widget.ircReadService ?? IrcReadService();
   late final _recentMessages =
       widget.recentMessagesService ?? RecentMessagesService();
+  late final _chatConn = ChatConnectionManager(
+    eventSub: _eventSub,
+    irc: _irc,
+    ircRead: _ircRead,
+    emoteManager: _emoteManager,
+    badgeService: _badgeService,
+    userStore: _userStore,
+    twitchAuth: widget.twitchAuth,
+    channelMessages: _channelMessages,
+    messageKeys: _messageKeys,
+    chatStatus: _chatStatus,
+    channelsWithUnread: _channelsWithUnread,
+    channelsWithUnreadMentions: _channelsWithUnreadMentions,
+    unreadMentionsPerChannel: _unreadMentionsPerChannel,
+    channels: _channels,
+    historyLoaded: _historyLoaded,
+    channelsEmotesResolved: _channelsEmotesResolved,
+    channelUserIds: _channelUserIds,
+    pendingLocals: _pendingLocals,
+    lastTypedText: _lastTypedText,
+    lastSentWireText: _lastSentWireText,
+    ownMessageIds: _ownMessageIds,
+    chatVersion: _chatVersion,
+    mentionsChannel: _mentionsChannel,
+    onRebuild: () {
+      if (mounted) setState(() {});
+    },
+    onSystemMessage: _addSystemMessage,
+    loadUserTwitchEmotes: _loadUserTwitchEmotes,
+    getMaxMessagesPerChannel: () => _maxMessagesPerChannel,
+    getSelectedChannel: () => _selectedChannel,
+    getUnreadMentions: () => _unreadMentions,
+    setUnreadMentions: (v) => _unreadMentions = v,
+    getCurrentUserLogin: () => _currentUserLogin,
+    setCurrentUserLogin: (v) => _currentUserLogin = v,
+    getCurrentUserId: () => _currentUserId,
+    setCurrentUserId: (v) => _currentUserId = v,
+    getCurrentUserColor: () => _currentUserColor,
+    setCurrentUserColor: (v) => _currentUserColor = v,
+    onCommand: _handleCommand,
+    getReplyToMsg: () => _replyToMsg,
+    setReplyToMsg: (v) => _replyToMsg = v,
+    onRequestFocus: () => _focusNode.requestFocus(),
+    onShowSnackBar: (msg) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      }
+    },
+  );
+  late final _commandHandler = CommandHandler(
+    irc: _irc,
+    getChannelUserIds: () => _channelUserIds,
+    getCurrentUserId: () => _currentUserId,
+    getCurrentUserLogin: () => _currentUserLogin,
+    addSystemMessage: _addSystemMessage,
+  );
   final _messageController = TextEditingController();
   final _focusNode = FocusNode();
 
@@ -103,22 +165,11 @@ class _HomeScreenState extends State<HomeScreen>
   static const _emoteMaxFraction = 0.6;
   static const _fullHeightFraction = 1.0;
   double? _emoteSheetBoxHeight;
-  final _threadPanelData = ValueNotifier<_ThreadPanelData?>(null);
+  final _threadPanelData = ValueNotifier<ThreadPanelData?>(null);
   final _mentionsPanelData = ValueNotifier<List<TwitchMessage>?>(null);
 
-  StreamSubscription<TwitchMessage>? _messageSub;
-  StreamSubscription<EventSubStatus>? _statusSub;
-  StreamSubscription<({String messageId, String targetUser, String channel})>?
-  _deleteSub;
-  StreamSubscription<IrcBanEvent>? _ircBanSub;
-  StreamSubscription<IrcNoticeEvent>? _ircNoticeSub;
-  StreamSubscription<IrcNoticeEvent>? _ircJtvSub;
-  StreamSubscription<IrcMessage>? _ircOwnMsgSub;
-  StreamSubscription<String>? _userColorSub;
-
   final _ownMessageIds = <String>{};
-  int _localCounter = 0;
-  final _pendingLocals = <String, _PendingLocal>{};
+  final _pendingLocals = <String, PendingLocal>{};
 
   String? _currentUserLogin;
   String? _currentUserColor;
@@ -126,10 +177,6 @@ class _HomeScreenState extends State<HomeScreen>
   String? _lastSentText;
   final Map<String, String> _lastTypedText = {};
   final Map<String, String> _lastSentWireText = {};
-  bool _wasConnected = false;
-  bool _wasDisconnected = false;
-  bool _userTwitchEmotesLoaded = false;
-  EventSubStatus _connectionStatus = EventSubStatus.disconnected;
 
   void _onSheetSizeChanged(OverlayPanel panel, DraggableScrollableController ctrl) {
     // When the user drags a sheet down to size 0, close the panel.
@@ -165,7 +212,7 @@ class _HomeScreenState extends State<HomeScreen>
     _chatVersion.addListener(_onPanelDataChanged);
     _loadMaxMessages();
     _loadChannels();
-    _connect();
+    _chatConn.connect();
     _emoteManager.accessToken = widget.twitchAuth.accessToken;
     _emoteManager.preloadGlobalEmotes();
     _emoteManager.addListener(_onEmotesChanged);
@@ -309,7 +356,7 @@ class _HomeScreenState extends State<HomeScreen>
   void _onPanelDataChanged() {
     if (_activePanel == OverlayPanel.thread && _openThreadRoot != null) {
       final channel = _openThreadRoot!.channel!;
-      _threadPanelData.value = _ThreadPanelData(
+      _threadPanelData.value = ThreadPanelData(
         root: _openThreadRoot!,
         messages: _computeThreadMessages(),
         channel: channel,
@@ -348,7 +395,7 @@ class _HomeScreenState extends State<HomeScreen>
           (c) => _emoteManager.resolveEmotes(c, _channelUserIds[c]),
         ),
       );
-      _userTwitchEmotesLoaded = false;
+      _chatConn.userTwitchEmotesLoaded = false;
       unawaited(_loadUserTwitchEmotes());
     } catch (e) {
       debugPrint('_refreshEmotesAfterAuth failed: $e');
@@ -413,11 +460,8 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   void dispose() {
+    _chatConn.dispose();
     WidgetsBinding.instance.removeObserver(this);
-    _messageSub?.cancel();
-    _statusSub?.cancel();
-    _deleteSub?.cancel();
-    _ircBanSub?.cancel();
     _eventSub.dispose();
     _irc.dispose();
     _ircRead.dispose();
@@ -426,11 +470,6 @@ class _HomeScreenState extends State<HomeScreen>
     _messageController.dispose();
     _focusNode.removeListener(_onInputFocusChanged);
     _focusNode.dispose();
-    _ircOwnMsgSub?.cancel();
-    _userColorSub?.cancel();
-    _ircBanSub?.cancel();
-    _ircNoticeSub?.cancel();
-    _ircJtvSub?.cancel();
     _chatVersion.removeListener(_onPanelDataChanged);
     _threadSheetCtrl.dispose();
     _mentionsSheetCtrl.dispose();
@@ -442,415 +481,6 @@ class _HomeScreenState extends State<HomeScreen>
     }
     _chatVersion.dispose();
     super.dispose();
-  }
-
-  Future<void> _connect() async {
-    final auth = widget.twitchAuth;
-
-    // Always listen for EventSub messages/incoming data, regardless of auth
-    // state. In tests these come from injected fake services; in production
-    // they flow from the EventSub WebSocket once connected.
-    _messageSub ??= _eventSub.onMessage.listen(_onMessage);
-    _deleteSub ??= _eventSub.onMessageDeleted.listen((event) {
-      if (!mounted) return;
-      final msgs = _channelMessages[event.channel];
-      if (msgs == null) return;
-      String? deletedUser;
-      String? deletedText;
-      for (final msg in msgs) {
-        if (msg.messageId == event.messageId && !msg.isSystem) {
-          msg.deleted = true;
-          deletedUser = msg.username;
-          deletedText = msg.text;
-          break;
-        }
-      }
-      if (deletedUser != null && deletedText != null) {
-        _addSystemMessage(
-          event.channel,
-          'A message from $deletedUser was deleted saying: "$deletedText".',
-        );
-      }
-    });
-
-    _ircBanSub?.cancel();
-    _ircBanSub = _irc.onBan.listen((event) {
-      if (!mounted) return;
-      final text = event.isTimeout
-          ? '${event.user} was timed out${event.duration != null ? ' for ${event.duration}s' : ''}.'
-          : '${event.user} was banned.';
-      _addSystemMessage(event.channel, text);
-    });
-
-    _ircNoticeSub?.cancel();
-    _ircNoticeSub = _irc.onNotice.listen((event) {
-      if (!mounted) return;
-      _addSystemMessage(event.channel, event.message);
-    });
-
-    _ircJtvSub?.cancel();
-    _ircJtvSub = _irc.onJtvMessage.listen((event) {
-      if (!mounted) return;
-      _addSystemMessage(event.channel, event.message);
-    });
-
-    _ircOwnMsgSub?.cancel();
-    _ircOwnMsgSub = _ircRead.onOwnMessage.listen(_onOwnIrcMessage);
-
-    _userColorSub?.cancel();
-    _userColorSub = _ircRead.onUserColor.listen((color) {
-      _currentUserColor = color;
-    });
-
-    if (!auth.isConfigured) return;
-
-    _statusSub?.cancel();
-    _statusSub = _eventSub.onStatus.listen((status) async {
-      if (!mounted) return;
-      setState(() {
-        _connectionStatus = status;
-      });
-      if (status == EventSubStatus.connected && !_wasConnected) {
-        _wasConnected = true;
-        _wasDisconnected = false;
-        await Future.delayed(const Duration(milliseconds: 500));
-        try {
-          await _subscribeAll();
-          if (!_userTwitchEmotesLoaded) {
-            _userTwitchEmotesLoaded = true;
-            unawaited(_loadUserTwitchEmotes());
-          }
-        } catch (_) {}
-        for (final channel in _channels) {
-          if (_historyLoaded.contains(channel)) {
-            _addSystemMessage(channel, 'Connected');
-          }
-        }
-      }
-      if (status == EventSubStatus.disconnected && !_wasDisconnected) {
-        _wasDisconnected = true;
-        _wasConnected = false;
-        for (final channel in _channels) {
-          _addSystemMessage(channel, 'Disconnected');
-        }
-      }
-    });
-
-    if (_currentUserLogin == null) {
-      try {
-        final currentUser = await TwitchApi.getCurrentUser(auth);
-        if (currentUser != null) {
-          _currentUserLogin = currentUser['login'];
-          _currentUserId = currentUser['id'];
-        }
-      } catch (_) {}
-    }
-
-    if (_currentUserLogin != null && auth.accessToken != null) {
-      try {
-        await _irc.connect(
-          username: _currentUserLogin!,
-          accessToken: auth.accessToken!,
-        );
-      } catch (_) {}
-      try {
-        await _ircRead.connect(
-          username: _currentUserLogin!,
-          accessToken: auth.accessToken!,
-        );
-      } catch (_) {}
-    }
-
-    await _eventSub.connect();
-  }
-
-  void _onMessage(TwitchMessage msg) {
-    if (!mounted) return;
-
-    if (!msg.isSystem && msg.username.isNotEmpty && msg.channel != null) {
-      _userStore.addUser(msg.channel!, msg.username);
-    }
-
-    final channel = msg.channel;
-    if (channel == null) return;
-
-    if (msg.messageId != null &&
-        _messageKeys.containsKey('$channel:${msg.messageId}')) {
-      // EventSub may deliver our own message with emote fragments that the
-      // local optimistic insert didn't have. Replace to get proper rendering.
-      final existing = _channelMessages[channel];
-      if (msg.emotePositions != null && existing != null) {
-        final idx = existing.indexWhere(
-          (m) => m.messageId == msg.messageId,
-        );
-        if (idx != -1) {
-          existing[idx] = msg;
-          _chatVersion.value++;
-          if (mounted) setState(() {});
-        }
-      }
-      return;
-    }
-
-    if (msg.messageId != null &&
-        _currentUserLogin != null &&
-        msg.username.toLowerCase() == _currentUserLogin!.toLowerCase()) {
-      String? pendingKey;
-      for (final entry in _pendingLocals.entries) {
-        if (entry.value.channel == channel &&
-            normalizeForReconciliation(entry.value.text) ==
-                normalizeForReconciliation(msg.text)) {
-          pendingKey = entry.key;
-          break;
-        }
-      }
-      if (pendingKey != null) {
-        _pendingLocals.remove(pendingKey);
-        _channelMessages[channel]?.removeWhere(
-          (m) => m.messageId == pendingKey,
-        );
-      }
-      _ownMessageIds.add(msg.messageId!);
-    }
-
-    if (msg.sourceBroadcasterId != null &&
-        _badgeService.resolveChannelAvatar(msg.sourceBroadcasterId!) == null) {
-      _badgeService.fetchChannelAvatar(
-        widget.twitchAuth,
-        msg.sourceBroadcasterId!,
-      );
-    }
-
-    final login = _currentUserLogin?.toLowerCase();
-
-    final isReplyToMe =
-        login != null &&
-        !msg.isSystem &&
-        !msg.isHistory &&
-        msg.replyToUser != null &&
-        msg.replyToUser!.toLowerCase() == login;
-    final isMention =
-        (login != null &&
-            !msg.isSystem &&
-            !msg.isHistory &&
-            _isMention(msg, login)) ||
-        isReplyToMe;
-
-    if (isMention) {
-      if (!msg.isHighlighted && channel != _selectedChannel) {
-        _unreadMentions++;
-        _channelsWithUnreadMentions.add(channel);
-        _unreadMentionsPerChannel[channel] =
-            (_unreadMentionsPerChannel[channel] ?? 0) + 1;
-      }
-      msg.isHighlighted = true;
-    }
-
-    _channelMessages.putIfAbsent(channel, () => []);
-    _channelMessages[channel]!.insert(0, msg);
-    _truncateChannelMessages(channel);
-
-    if (msg.messageId != null) {
-      _messageKeys.putIfAbsent('$channel:${msg.messageId}', () => GlobalKey());
-    }
-
-    if (msg.isHighlighted) {
-      _channelMessages.putIfAbsent(_mentionsChannel, () => []);
-      _channelMessages[_mentionsChannel]!.insert(0, msg);
-    }
-
-    _chatVersion.value++;
-
-    var needsHeaderRebuild = false;
-    if (channel != _selectedChannel && !msg.isHistory) {
-      _channelsWithUnread.add(channel);
-      needsHeaderRebuild = true;
-    }
-    if (msg.isHighlighted) {
-      needsHeaderRebuild = true;
-    }
-    if (needsHeaderRebuild && mounted) {
-      setState(() {});
-    }
-    _precacheMessageEmotes(msg, channel);
-  }
-
-  void _onOwnIrcMessage(IrcMessage ircMsg) {
-    if (!mounted) return;
-    final channel = ircMsg.params.isNotEmpty
-        ? ircMsg.params[0].substring(1)
-        : null;
-    if (channel == null || ircMsg.trailing == null) return;
-
-    final displayName =
-        ircMsg.tags['display-name']?.trim() ?? _currentUserLogin ?? '';
-    if (displayName.isNotEmpty) {
-      _userStore.addUser(channel, displayName);
-    }
-
-    final colorTag = ircMsg.tags['color'];
-    if (colorTag != null && colorTag.isNotEmpty) {
-      _currentUserColor = colorTag;
-    }
-
-    final messageId = ircMsg.tags['id'];
-    final text = ircMsg.trailing!;
-
-    if (messageId != null && _messageKeys.containsKey('$channel:$messageId')) {
-      return;
-    }
-
-    String? pendingKey;
-    TwitchMessage? pendingMsg;
-    for (final entry in _pendingLocals.entries) {
-      if (entry.value.channel == channel &&
-          normalizeForReconciliation(entry.value.text) ==
-              normalizeForReconciliation(text)) {
-        pendingKey = entry.key;
-        break;
-      }
-    }
-    if (pendingKey != null) {
-      final existing = _channelMessages[channel];
-      if (existing != null) {
-        final idx = existing.indexWhere((m) => m.messageId == pendingKey);
-        if (idx != -1) {
-          pendingMsg = existing[idx];
-        }
-      }
-      _pendingLocals.remove(pendingKey);
-      _channelMessages[channel]?.removeWhere((m) => m.messageId == pendingKey);
-    }
-
-    final tsMs = ircMsg.tags['tmi-sent-ts'];
-    final timestamp = tsMs != null
-        ? DateTime.fromMillisecondsSinceEpoch(int.parse(tsMs), isUtc: true)
-        : DateTime.now().toUtc();
-
-    final userId = ircMsg.tags['user-id'] ?? _currentUserId;
-    final color =
-        ircMsg.tags['color'] != null && ircMsg.tags['color']!.isNotEmpty
-        ? ircMsg.tags['color']!
-        : pickColor(displayName.toLowerCase());
-
-    List<EmotePosition>? emotePositions;
-    final emotesTag = ircMsg.tags['emotes'];
-    if (emotesTag != null && emotesTag.isNotEmpty) {
-      emotePositions = [];
-      for (final emoteEntry in emotesTag.split('/')) {
-        final colonIdx = emoteEntry.indexOf(':');
-        if (colonIdx == -1) continue;
-        final emoteId = emoteEntry.substring(0, colonIdx);
-        final positionsStr = emoteEntry.substring(colonIdx + 1);
-        for (final posStr in positionsStr.split(',')) {
-          final dashIdx = posStr.indexOf('-');
-          if (dashIdx == -1) continue;
-          final start = int.tryParse(posStr.substring(0, dashIdx));
-          final end = int.tryParse(posStr.substring(dashIdx + 1));
-          if (start == null || end == null) continue;
-          if (start < 0 || end >= text.length) continue;
-          final emoteCode = text.substring(start, end + 1);
-          emotePositions.add(
-            EmotePosition(
-              emoteId: emoteId,
-              startIndex: start,
-              endIndex: end + 1,
-              emoteCode: emoteCode,
-            ),
-          );
-        }
-      }
-      if (emotePositions.isEmpty) emotePositions = null;
-    }
-
-    final msg = TwitchMessage(
-      username: displayName,
-      text: text,
-      channel: channel,
-      messageId: messageId,
-      timestamp: timestamp,
-      userId: userId,
-      color: color,
-      replyToParentId: pendingMsg?.replyToParentId,
-      replyToUser: pendingMsg?.replyToUser,
-      replyToText: pendingMsg?.replyToText,
-      emotePositions: emotePositions,
-    );
-
-    _channelMessages.putIfAbsent(channel, () => []);
-    _channelMessages[channel]!.insert(0, msg);
-    _truncateChannelMessages(channel);
-
-    if (messageId != null) {
-      _messageKeys.putIfAbsent('$channel:$messageId', () => GlobalKey());
-    }
-
-    _chatVersion.value++;
-    if (mounted) setState(() {});
-    _precacheMessageEmotes(msg, channel);
-  }
-
-  void _insertLocalMessage(
-    String text,
-    String channel,
-    String? messageId,
-    TwitchMessage? replyTo,
-  ) {
-    final login = _currentUserLogin;
-    if (login == null) return;
-
-    final useTempId = messageId == null;
-    final effectiveId = useTempId ? 'local_${_localCounter++}' : messageId;
-
-    if (!useTempId && _messageKeys.containsKey('$channel:$effectiveId')) {
-      return;
-    }
-
-    final msg = TwitchMessage(
-      username: login,
-      text: text,
-      channel: channel,
-      messageId: effectiveId,
-      color: _currentUserColor ?? pickColor(login.toLowerCase()),
-      userId: _currentUserId,
-      replyToParentId: replyTo?.messageId,
-      replyToUser: replyTo?.username,
-      replyToText: replyTo?.text,
-    );
-    _channelMessages.putIfAbsent(channel, () => []);
-    _channelMessages[channel]!.insert(0, msg);
-    if (useTempId) {
-      _pendingLocals[effectiveId] = _PendingLocal(channel, text);
-    }
-    _truncateChannelMessages(channel);
-    if (!useTempId) {
-      _messageKeys.putIfAbsent('$channel:$messageId', () => GlobalKey());
-    }
-    _chatVersion.value++;
-    if (mounted) setState(() {});
-  }
-
-  void _precacheMessageEmotes(TwitchMessage msg, String channel) {
-    if (msg.isSystem || msg.isHistory) return;
-    final channelEmotes = _emoteManager.byCode(channel);
-    if (channelEmotes == null) return;
-    final found = <GenericEmote>[];
-    final seen = <String>{};
-    for (final word in msg.text.split(RegExp(r'\s+'))) {
-      if (seen.contains(word)) continue;
-      final emote = channelEmotes.byCode[word];
-      if (emote != null) {
-        found.add(emote);
-        seen.add(word);
-      }
-    }
-    if (found.isNotEmpty) {
-      _emoteManager.enqueueSeenEmotes(found);
-    }
-  }
-
-  bool _isMention(TwitchMessage msg, String login) {
-    return isMention(msg.text, login);
   }
 
   void _addSystemMessage(String channel, String text) {
@@ -987,10 +617,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _maybeAddConnected(String channel) {
-    if (_connectionStatus == EventSubStatus.connected &&
-        _historyLoaded.contains(channel)) {
-      _addSystemMessage(channel, 'Connected');
-    }
+    _chatConn.maybeAddConnected(channel);
   }
 
   Future<void> _addChannel(String channelName) async {
@@ -1063,132 +690,8 @@ class _HomeScreenState extends State<HomeScreen>
     if (mounted) setState(() {});
   }
 
-  Future<void> _fetchChatStatus(String channel) async {
-    final auth = widget.twitchAuth;
-    if (!auth.isConfigured) return;
-
-    final userId = _channelUserIds[channel];
-    if (userId == null || _currentUserId == null) return;
-
-    final settings = await TwitchApi.getChatSettings(
-      auth,
-      userId,
-      _currentUserId!,
-    );
-    final stream = await TwitchApi.getStreamInfo(auth, userId);
-
-    if (!mounted) return;
-    final parts = <String>[];
-    if (settings != null) {
-      if (settings['follower_mode'] == true) parts.add('Followers-only');
-      if (settings['subscriber_mode'] == true) parts.add('Subscribers-only');
-      if (settings['emote_mode'] == true) parts.add('Emote-only');
-      if (settings['slow_mode'] == true) {
-        final wait = settings['slow_mode_wait_time'] ?? '?';
-        parts.add('Slow ($wait${wait == '?' ? '' : 's'})');
-      }
-    }
-    if (stream != null && stream['type'] == 'live') {
-      final viewers = stream['viewer_count'] ?? 0;
-      final started = stream['started_at'] as String?;
-      if (started != null) {
-        final dur = DateTime.now().difference(DateTime.parse(started));
-        final h = dur.inHours;
-        final m = dur.inMinutes.remainder(60);
-        parts.add('Live with $viewers viewers for ${h}h ${m}m');
-      } else {
-        parts.add('Live with $viewers viewers');
-      }
-    }
-    setState(() {
-      _chatStatus[channel] = parts.isNotEmpty ? parts.join(' · ') : '';
-    });
-  }
-
   Future<void> _subscribeChannel(String channelName) async {
-    try {
-      final auth = widget.twitchAuth;
-      final channelUserId = await TwitchApi.getUserId(auth, channelName);
-      if (channelUserId == null) return;
-      _channelUserIds[channelName] = channelUserId;
-      _badgeService.fetchChannelBadges(auth, channelUserId, channelName);
-
-      _emoteManager.accessToken = auth.accessToken;
-      debugPrint(
-        '_subscribeChannel $channelName userId=$channelUserId '
-        'hasToken=${auth.accessToken != null} resolved=${_channelsEmotesResolved.contains(channelName)}',
-      );
-      if (!_channelsEmotesResolved.contains(channelName)) {
-        await _emoteManager.resolveEmotes(channelName, channelUserId);
-        _channelsEmotesResolved.add(channelName);
-      }
-
-      if (_currentUserLogin == null) {
-        final currentUser = await TwitchApi.getCurrentUser(auth);
-        if (currentUser == null) return;
-        _currentUserLogin = currentUser['login'];
-        _currentUserId = currentUser['id'];
-      }
-
-      if (!_userTwitchEmotesLoaded) {
-        _userTwitchEmotesLoaded = true;
-        unawaited(_loadUserTwitchEmotes());
-      }
-
-      _eventSub.setChannelMapping(channelUserId, channelName);
-
-      for (int attempt = 0; attempt < 3; attempt++) {
-        final sessionId = _eventSub.sessionId;
-        if (sessionId == null) {
-          if (attempt == 2) {
-            _addSystemMessage(channelName, 'Warning: EventSub session lost');
-          }
-          await Future.delayed(const Duration(seconds: 1));
-          continue;
-        }
-
-        if (attempt > 0) await Future.delayed(const Duration(seconds: 1));
-
-        final ok = await TwitchApi.createSubscription(
-          auth: auth,
-          sessionId: sessionId,
-          broadcasterUserId: channelUserId,
-          userId: _currentUserId!,
-        );
-        if (ok) {
-          final okDel = await TwitchApi.createDeleteSubscription(
-            auth: auth,
-            sessionId: sessionId,
-            broadcasterUserId: channelUserId,
-            userId: _currentUserId!,
-          );
-          if (!okDel) {
-            _addSystemMessage(
-              channelName,
-              'Warning: delete subscription failed (${TwitchApi.lastError ?? "unknown"})',
-            );
-          }
-          break;
-        }
-        if (attempt == 2) {
-          _addSystemMessage(
-            channelName,
-            'Warning: chat subscription failed (${TwitchApi.lastError ?? "unknown"})',
-          );
-        }
-      }
-    } catch (_) {}
-
-    if (mounted) {
-      setState(() {});
-      _fetchChatStatus(channelName);
-    }
-  }
-
-  Future<void> _subscribeAll() async {
-    for (final channel in _channels) {
-      await _subscribeChannel(channel);
-    }
+    _chatConn.subscribeChannel(channelName);
   }
 
   void _addChannelDialog() {
@@ -1289,67 +792,7 @@ class _HomeScreenState extends State<HomeScreen>
     String channel, {
     TwitchMessage? replyTo,
   }) async {
-    final auth = widget.twitchAuth;
-    final reply = replyTo ?? _replyToMsg;
-
-    // Handle slash commands via dedicated API endpoints.
-    if (text.startsWith('/')) {
-      _handleCommand(text, channel, auth);
-      _focusNode.requestFocus();
-      return;
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _replyToMsg = null;
-    });
-    _focusNode.requestFocus();
-
-    final userLogin = _currentUserLogin;
-    if (userLogin == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Connect an account to chat')),
-        );
-      }
-      return;
-    }
-
-    final String wireText;
-    if (text == _lastTypedText[channel]) {
-      final lastWire = _lastSentWireText[channel] ?? text;
-      wireText = bypassTextDuplicate(lastWire);
-    } else {
-      wireText = text;
-    }
-    _lastTypedText[channel] = text;
-    _lastSentWireText[channel] = wireText;
-
-    // Try Helix API if available.
-    if (_currentUserId != null && auth.isConfigured) {
-      final broadcasterId =
-          _channelUserIds[channel] ?? await TwitchApi.getUserId(auth, channel);
-      if (broadcasterId != null) {
-        try {
-          final messageId = await TwitchApi.sendChatMessage(
-            auth,
-            broadcasterId: broadcasterId,
-            senderId: _currentUserId!,
-            message: wireText,
-            replyParentMessageId: reply?.messageId,
-          );
-          if (messageId != null && mounted) {
-            _ownMessageIds.add(messageId);
-            _insertLocalMessage(text, channel, messageId, reply);
-          }
-        } catch (_) {}
-        return;
-      }
-    }
-
-    // IRC fallback — insert optimistically with temp ID.
-    _insertLocalMessage(text, channel, null, reply);
-    _irc.sendMessage(channel, wireText, replyParentMessageId: reply?.messageId);
+    _chatConn.doSendMessage(text, channel, replyTo: replyTo);
   }
 
   void _onSendLongPress() {
@@ -1364,226 +807,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   /// Handles slash commands by routing to the appropriate Twitch API endpoint.
   void _handleCommand(String text, String channel, TwitchAuth auth) async {
-    final parts = text.split(RegExp(r'\s+'));
-    final cmd = parts[0].toLowerCase();
-    final args = parts.length > 1 ? parts.sublist(1) : [];
-
-    // /me is the only IRC command still supported by Twitch (Feb 2023).
-    // Send via IRC; the response comes back through EventSub/IRC.
-    if (cmd == '/me') {
-      if (_currentUserLogin != null && auth.isConfigured) {
-        _irc.sendMessage(channel, text);
-      }
-      return;
-    }
-
-    final broadcasterId = _channelUserIds[channel];
-    if (_currentUserId == null || broadcasterId == null || !auth.isConfigured) {
-      _addSystemMessage(channel, 'Not authenticated or channel not joined.');
-      return;
-    }
-
-    switch (cmd) {
-      case '/color':
-        if (args.isEmpty) {
-          _addSystemMessage(
-            channel,
-            "Usage: /color <color> - Color must be one of Twitch's supported colors (blue, blue_violet, cadet_blue, chocolate, coral, dodger_blue, firebrick, golden_rod, green, hot_pink, orange_red, red, sea_green, spring_green, yellow_green) or a hex code (#000000) if you have Turbo or Prime.",
-          );
-          return;
-        }
-        final color = args.join(' ');
-        final ok = await TwitchApi.updateUserChatColor(
-          auth,
-          userId: _currentUserId!,
-          color: color,
-        );
-        if (ok) {
-          _addSystemMessage(channel, 'Your color has been changed to $color');
-        } else {
-          _addSystemMessage(
-            channel,
-            'Failed to change color to $color - ${TwitchApi.lastError ?? "unknown error"}',
-          );
-        }
-
-      case '/ban':
-        if (args.isEmpty) {
-          _addSystemMessage(channel, 'Usage: /ban <username> [reason]');
-          return;
-        }
-        final targetLogin = args[0];
-        final reason = args.length > 1 ? args.sublist(1).join(' ') : null;
-        final targetId = await TwitchApi.getUserId(auth, targetLogin);
-        if (targetId == null) {
-          _addSystemMessage(channel, 'User "$targetLogin" not found.');
-          return;
-        }
-        final ok = await TwitchApi.banUser(
-          auth,
-          broadcasterId: broadcasterId,
-          moderatorId: _currentUserId!,
-          userId: targetId,
-          reason: reason,
-        );
-        if (ok) {
-          _addSystemMessage(channel, '$targetLogin has been banned.');
-        } else {
-          _addSystemMessage(
-            channel,
-            'Failed to ban $targetLogin: ${TwitchApi.lastError ?? "unknown error"}',
-          );
-        }
-
-      case '/unban':
-        if (args.isEmpty) {
-          _addSystemMessage(channel, 'Usage: /unban <username>');
-          return;
-        }
-        final targetId = await TwitchApi.getUserId(auth, args[0]);
-        if (targetId == null) {
-          _addSystemMessage(channel, 'User "${args[0]}" not found.');
-          return;
-        }
-        final ok = await TwitchApi.unbanUser(
-          auth,
-          broadcasterId: broadcasterId,
-          moderatorId: _currentUserId!,
-          userId: targetId,
-        );
-        if (ok) {
-          _addSystemMessage(channel, '${args[0]} has been unbanned.');
-        } else {
-          _addSystemMessage(
-            channel,
-            'Failed to unban ${args[0]}: ${TwitchApi.lastError ?? "unknown error"}',
-          );
-        }
-
-      case '/timeout':
-        if (args.isEmpty) {
-          _addSystemMessage(
-            channel,
-            'Usage: /timeout <username> [seconds] [reason]',
-          );
-          return;
-        }
-        final targetLogin = args[0];
-        int duration = 600; // default 10 min
-        String? reason;
-        if (args.length > 1) {
-          final parsed = int.tryParse(args[1]);
-          if (parsed != null) {
-            duration = parsed;
-            if (args.length > 2) reason = args.sublist(2).join(' ');
-          } else {
-            reason = args.sublist(1).join(' ');
-          }
-        }
-        final targetId = await TwitchApi.getUserId(auth, targetLogin);
-        if (targetId == null) {
-          _addSystemMessage(channel, 'User "$targetLogin" not found.');
-          return;
-        }
-        final ok = await TwitchApi.banUser(
-          auth,
-          broadcasterId: broadcasterId,
-          moderatorId: _currentUserId!,
-          userId: targetId,
-          duration: duration,
-          reason: reason,
-        );
-        if (ok) {
-          _addSystemMessage(
-            channel,
-            '$targetLogin timed out for ${duration}s.',
-          );
-        } else {
-          _addSystemMessage(
-            channel,
-            'Failed to timeout $targetLogin: ${TwitchApi.lastError ?? "unknown error"}',
-          );
-        }
-
-      case '/delete':
-        if (args.isEmpty) {
-          _addSystemMessage(channel, 'Usage: /delete <message_id>');
-          return;
-        }
-        final ok = await TwitchApi.deleteChatMessage(
-          auth,
-          broadcasterId: broadcasterId,
-          moderatorId: _currentUserId!,
-          messageId: args[0],
-        );
-        if (ok) {
-          _addSystemMessage(channel, 'Message deleted.');
-        } else {
-          _addSystemMessage(
-            channel,
-            'Failed to delete message: ${TwitchApi.lastError ?? "unknown error"}',
-          );
-        }
-
-      case '/clear':
-        final ok = await TwitchApi.deleteChatMessage(
-          auth,
-          broadcasterId: broadcasterId,
-          moderatorId: _currentUserId!,
-        );
-        if (ok) {
-          _addSystemMessage(channel, 'Chat cleared.');
-        } else {
-          _addSystemMessage(
-            channel,
-            'Failed to clear chat: ${TwitchApi.lastError ?? "unknown error"}',
-          );
-        }
-
-      case '/announce':
-        if (args.isEmpty) {
-          _addSystemMessage(channel, 'Usage: /announce <message>');
-          return;
-        }
-        final ok = await TwitchApi.sendChatAnnouncement(
-          auth,
-          broadcasterId: broadcasterId,
-          moderatorId: _currentUserId!,
-          message: args.join(' '),
-        );
-        if (!ok) {
-          _addSystemMessage(
-            channel,
-            'Failed to announce: ${TwitchApi.lastError ?? "unknown error"}',
-          );
-        }
-
-      case '/shoutout':
-        if (args.isEmpty) {
-          _addSystemMessage(channel, 'Usage: /shoutout <username>');
-          return;
-        }
-        final targetId = await TwitchApi.getUserId(auth, args[0]);
-        if (targetId == null) {
-          _addSystemMessage(channel, 'User "${args[0]}" not found.');
-          return;
-        }
-        final ok = await TwitchApi.sendShoutout(
-          auth,
-          broadcasterId: broadcasterId,
-          moderatorId: _currentUserId!,
-          targetUserId: targetId,
-        );
-        if (!ok) {
-          _addSystemMessage(
-            channel,
-            'Failed to send shoutout: ${TwitchApi.lastError ?? "unknown error"}',
-          );
-        }
-
-      default:
-        _addSystemMessage(channel, 'Unknown command: $cmd');
-    }
+    _commandHandler.handle(text, channel, auth);
   }
 
   ScrollController _scrollCtrl(String channel) {
@@ -1627,7 +851,7 @@ class _HomeScreenState extends State<HomeScreen>
       _activePanel = OverlayPanel.thread;
       _openThreadRoot = rootMsg;
     });
-    _threadPanelData.value = _ThreadPanelData(
+    _threadPanelData.value = ThreadPanelData(
       root: rootMsg,
       messages: _computeThreadMessages(),
       channel: channel,
@@ -1796,7 +1020,7 @@ class _HomeScreenState extends State<HomeScreen>
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (ctx) => _UserProfileSheet(
+      builder: (ctx) => UserProfileSheet(
         username: username,
         userId: userId,
         twitchAuth: widget.twitchAuth,
@@ -1811,7 +1035,7 @@ class _HomeScreenState extends State<HomeScreen>
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (ctx) => _EmoteSheet(
+      builder: (ctx) => EmoteSheet(
         emote: emote,
         messageController: _messageController,
         focusNode: _focusNode,
@@ -1848,34 +1072,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _truncateChannelMessages(String channel) {
-    final maxMessages = _maxMessagesPerChannel;
-    if (maxMessages <= 0) return;
-    final msgs = _channelMessages[channel];
-    if (msgs == null || msgs.length <= maxMessages) return;
-
-    final threadParentIds = <String>{};
-    for (final m in msgs) {
-      if (m.replyToParentId != null) {
-        threadParentIds.add(m.replyToParentId!);
-      }
-    }
-
-    final toRemove = <int>[];
-    int extra = msgs.length - maxMessages;
-    for (int i = msgs.length - 1; i >= 0 && extra > 0; i--) {
-      final m = msgs[i];
-      final inThread =
-          (m.messageId != null && threadParentIds.contains(m.messageId!)) ||
-          m.replyToParentId != null;
-      if (!inThread) {
-        toRemove.add(i);
-        extra--;
-      }
-    }
-
-    for (final i in toRemove) {
-      msgs.removeAt(i);
-    }
+    _chatConn.truncateChannelMessages(channel);
   }
 
   @override
@@ -1950,7 +1147,7 @@ class _HomeScreenState extends State<HomeScreen>
                                     onAddChannel: _addChannel,
                                     onSettingsClosed: () {
                                       if (mounted) setState(() {});
-                                      _connect();
+                                      _chatConn.connect();
                                     },
                                     eventSubMessageStream: _eventSub.onMessage,
                                   ),
@@ -2052,7 +1249,7 @@ class _HomeScreenState extends State<HomeScreen>
                                     child: RepaintBoundary(
                                       child: Material(
                                         color: sheetTheme.scaffoldBackgroundColor,
-                                        child: _ThreadPanelWidget(
+                                        child: ThreadPanelWidget(
                                           key: const ValueKey('thread_panel'),
                                           data: _threadPanelData,
                                           uiScale: 1.0,
@@ -2098,7 +1295,7 @@ class _HomeScreenState extends State<HomeScreen>
                                     child: RepaintBoundary(
                                       child: Material(
                                         color: sheetTheme.scaffoldBackgroundColor,
-                                        child: _MentionsPanelWidget(
+                                        child: MentionsPanelWidget(
                                           key: const ValueKey('mentions_panel'),
                                           messages: _mentionsPanelData,
                                           uiScale: 1.0,
@@ -2146,7 +1343,7 @@ class _HomeScreenState extends State<HomeScreen>
                                     child: RepaintBoundary(
                                       child: Material(
                                         color: sheetTheme.scaffoldBackgroundColor,
-                                        child: _EmoteMenuPanelWidget(
+                                        child: EmoteMenuPanelWidget(
                                           key: const ValueKey('emote_panel'),
                                           isActive: _activePanel == OverlayPanel.emotes,
                                           uiScale: 1.0,
@@ -2156,6 +1353,8 @@ class _HomeScreenState extends State<HomeScreen>
                                           emoteManager: _emoteManager,
                                           scrollController: scrollController,
                                           sheetCtrl: _emoteSheetCtrl,
+                                          emoteMaxFraction: _emoteMaxFraction,
+                                          sheetAnimDuration: _sheetAnimDuration,
                                         ),
                                       ),
                                     ),
@@ -2201,7 +1400,7 @@ class _HomeScreenState extends State<HomeScreen>
                 child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                _MessageInput(
+                MessageInput(
                       controller: _messageController,
                       focusNode: _focusNode,
                       onSend: _sendMessage,
@@ -2577,1271 +1776,4 @@ bool isMention(String text, String login) {
     if (lower == '@$login' || lower == login) return true;
   }
   return false;
-}
-
-class _UserProfileSheet extends StatefulWidget {
-  final String username;
-  final String? userId;
-  final TwitchAuth twitchAuth;
-  final TextEditingController messageController;
-  final FocusNode focusNode;
-  final VoidCallback onClose;
-
-  const _UserProfileSheet({
-    required this.username,
-    this.userId,
-    required this.twitchAuth,
-    required this.messageController,
-    required this.focusNode,
-    required this.onClose,
-  });
-
-  @override
-  State<_UserProfileSheet> createState() => _UserProfileSheetState();
-}
-
-class _UserProfileSheetState extends State<_UserProfileSheet> {
-  Map<String, dynamic>? _profile;
-  bool _loading = true;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _fetchProfile();
-  }
-
-  Future<void> _fetchProfile() async {
-    try {
-      final profile = await TwitchApi.getUserProfile(
-        widget.twitchAuth,
-        widget.username,
-      );
-      if (!mounted) return;
-      if (profile != null) {
-        setState(() {
-          _profile = profile;
-          _loading = false;
-        });
-      } else {
-        setState(() {
-          _error = TwitchApi.lastError ?? 'User not found';
-          _loading = false;
-        });
-      }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = e.toString();
-        _loading = false;
-      });
-    }
-  }
-
-  String _formatDate(String iso) {
-    try {
-      final dt = DateTime.parse(iso);
-      return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
-    } catch (_) {
-      return iso;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Center(
-            child: Container(
-              width: 32,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[400],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          if (_loading) ...[
-            const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: CircularProgressIndicator(),
-              ),
-            ),
-          ] else if (_error != null) ...[
-            Center(
-              child: Text(_error!, style: const TextStyle(color: Colors.grey)),
-            ),
-          ] else if (_profile != null) ...[
-            Row(
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.network(
-                    _profile!['profile_image_url'] as String? ?? '',
-                    width: 64,
-                    height: 64,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) => Container(
-                      width: 64,
-                      height: 64,
-                      color: theme.colorScheme.surfaceContainerHighest,
-                      child: Icon(
-                        Icons.person,
-                        size: 32,
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _profile!['display_name'] as String? ?? widget.username,
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
-                          color: theme.colorScheme.onSurface,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Created: ${_formatDate(_profile!['created_at'] as String? ?? '')}',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Divider(height: 1, color: theme.dividerColor),
-            const SizedBox(height: 4),
-            ListTile(
-              dense: true,
-              leading: const Icon(Icons.alternate_email),
-              title: const Text('Mention user'),
-              onTap: () {
-                widget.onClose();
-                final text = widget.messageController.text;
-                final prefix = text.isEmpty
-                    ? '@${widget.username} '
-                    : '@${widget.username} ';
-                widget.messageController.text = '$prefix$text';
-                widget.messageController.selection = TextSelection.fromPosition(
-                  TextPosition(offset: widget.messageController.text.length),
-                );
-                widget.focusNode.requestFocus();
-              },
-            ),
-            ListTile(
-              dense: true,
-              leading: const Icon(Icons.chat_bubble_outline),
-              title: const Text('Whisper user'),
-              onTap: () {
-                widget.onClose();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Whisper not yet supported')),
-                );
-              },
-            ),
-            ListTile(
-              dense: true,
-              leading: const Icon(Icons.block),
-              title: const Text('Block'),
-              onTap: () async {
-                final userId = widget.userId ?? _profile?['id'] as String?;
-                if (userId == null) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Cannot block: user ID unknown'),
-                    ),
-                  );
-                  return;
-                }
-                final confirmed = await showDialog<bool>(
-                  context: context,
-                  builder: (ctx) => AlertDialog(
-                    title: const Text('Block user'),
-                    content: Text(
-                      'Block ${widget.username}? They will not be able to whisper you or host your channel.',
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(ctx, false),
-                        child: const Text('Cancel'),
-                      ),
-                      FilledButton(
-                        onPressed: () => Navigator.pop(ctx, true),
-                        child: const Text('Block'),
-                      ),
-                    ],
-                  ),
-                );
-                if (confirmed != true || !context.mounted) return;
-                final ok = await TwitchApi.blockUser(widget.twitchAuth, userId);
-                if (!context.mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      ok
-                          ? '${widget.username} blocked'
-                          : 'Block failed: ${TwitchApi.lastError ?? "unknown"}',
-                    ),
-                  ),
-                );
-                widget.onClose();
-              },
-            ),
-            ListTile(
-              dense: true,
-              leading: const Icon(Icons.flag_outlined),
-              title: const Text('Report'),
-              onTap: () async {
-                final userId = widget.userId ?? _profile?['id'] as String?;
-                if (userId == null) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Cannot report: user ID unknown'),
-                    ),
-                  );
-                  return;
-                }
-                final reasonController = TextEditingController();
-                final confirmed = await showDialog<bool>(
-                  context: context,
-                  builder: (ctx) => AlertDialog(
-                    title: const Text('Report user'),
-                    content: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text('Report ${widget.username} for:'),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: reasonController,
-                          decoration: const InputDecoration(
-                            hintText: 'Reason (optional)',
-                            border: OutlineInputBorder(),
-                          ),
-                          maxLines: 2,
-                        ),
-                      ],
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(ctx, false),
-                        child: const Text('Cancel'),
-                      ),
-                      FilledButton(
-                        onPressed: () => Navigator.pop(ctx, true),
-                        child: const Text('Report'),
-                      ),
-                    ],
-                  ),
-                );
-                if (confirmed != true || !context.mounted) return;
-                final broadcasterId = _profile?['id'] as String? ?? userId;
-                final ok = await TwitchApi.reportUser(
-                  widget.twitchAuth,
-                  userId: userId,
-                  broadcasterId: broadcasterId,
-                  reason: reasonController.text,
-                );
-                if (!context.mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      ok
-                          ? 'Report submitted'
-                          : 'Report failed: ${TwitchApi.lastError ?? "unknown"}',
-                    ),
-                  ),
-                );
-                widget.onClose();
-              },
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _EmoteSheet extends StatelessWidget {
-  final GenericEmote emote;
-  final TextEditingController messageController;
-  final FocusNode focusNode;
-  final VoidCallback onClose;
-
-  const _EmoteSheet({
-    required this.emote,
-    required this.messageController,
-    required this.focusNode,
-    required this.onClose,
-  });
-
-  String _typeLabel(GenericEmote emote) {
-    final scope = switch (emote.scope) {
-      EmoteScope.global => 'Global',
-      EmoteScope.channel => 'Channel',
-    };
-    final provider = switch (emote.type) {
-      EmoteType.twitch => 'Twitch',
-      EmoteType.bttv => 'BTTV',
-      EmoteType.ffz => 'FFZ',
-      EmoteType.sevenTv => '7TV',
-    };
-    return '$scope $provider emote';
-  }
-
-  String? _ownerLabel(GenericEmote emote) {
-    final owner = emote.ownerChannel;
-    if (owner == null) return null;
-    return 'Created by $owner';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Center(
-            child: Container(
-              width: 32,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[400],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: CachedNetworkImage(
-                  imageUrl: emote.url,
-                  width: 64,
-                  height: 64,
-                  fit: BoxFit.contain,
-                  fadeInDuration: Duration.zero,
-                  placeholder: (_, _) => Container(
-                    width: 64,
-                    height: 64,
-                    color: theme.colorScheme.surfaceContainerHighest,
-                  ),
-                  errorWidget: (_, _, _) => Container(
-                    width: 64,
-                    height: 64,
-                    color: theme.colorScheme.surfaceContainerHighest,
-                    child: Icon(
-                      Icons.image,
-                      size: 32,
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      emote.code,
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                        color: theme.colorScheme.onSurface,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      _typeLabel(emote),
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    if (_ownerLabel(emote) != null) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        _ownerLabel(emote)!,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Divider(height: 1, color: theme.dividerColor),
-          const SizedBox(height: 4),
-          ListTile(
-            dense: true,
-            leading: const Icon(Icons.send),
-            title: const Text('Use emote'),
-            onTap: () {
-              onClose();
-              final text = messageController.text;
-              final suffix = text.isEmpty ? emote.code : ' $emote.code';
-              messageController.text = '$text$suffix';
-              messageController.selection = TextSelection.fromPosition(
-                TextPosition(offset: messageController.text.length),
-              );
-              focusNode.requestFocus();
-            },
-          ),
-          ListTile(
-            dense: true,
-            leading: const Icon(Icons.copy),
-            title: const Text('Copy'),
-            onTap: () {
-              Clipboard.setData(ClipboardData(text: emote.code));
-              onClose();
-            },
-          ),
-          ListTile(
-            dense: true,
-            leading: const Icon(Icons.open_in_new),
-            title: const Text('Open emote link'),
-            onTap: () {
-              onClose();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Emote link not yet available')),
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MessageInput extends StatelessWidget {
-  final TextEditingController controller;
-  final FocusNode focusNode;
-  final VoidCallback onSend;
-  final VoidCallback? onSendLongPress;
-  final VoidCallback? onEmoteToggle;
-  final TwitchMessage? replyToMsg;
-  final VoidCallback? onCancelReply;
-  final bool enabled;
-  final String? hintText;
-
-  const _MessageInput({
-    required this.controller,
-    required this.focusNode,
-    required this.onSend,
-    this.onSendLongPress,
-    this.onEmoteToggle,
-    this.replyToMsg,
-    this.onCancelReply,
-    this.enabled = true,
-    this.hintText,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final effectiveHint = hintText ?? 'Type a message...';
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (replyToMsg != null && enabled)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainerHighest,
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(8),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.reply, size: 16, color: theme.colorScheme.primary),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text.rich(
-                      TextSpan(
-                        children: [
-                          TextSpan(
-                            text: 'Replying to ${replyToMsg!.username}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: theme.colorScheme.primary,
-                            ),
-                          ),
-                          TextSpan(
-                            text:
-                                ': ${replyToMsg!.text.length > 60 ? '${replyToMsg!.text.substring(0, 60)}…' : replyToMsg!.text}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  IconButton(
-                    icon: Icon(Icons.close, size: 16),
-                    tooltip: 'Cancel reply',
-                    onPressed: onCancelReply,
-                    visualDensity: VisualDensity.compact,
-                  ),
-                ],
-              ),
-            ),
-          TextField(
-            key: const Key('message_input'),
-            controller: controller,
-            focusNode: focusNode,
-            enabled: enabled,
-            minLines: 1,
-            maxLines: 6,
-            decoration: InputDecoration(
-              labelText: effectiveHint,
-              border: const OutlineInputBorder(),
-              prefixIcon: SizedBox(
-                width: 48,
-                height: 48,
-                child: Material(
-                  type: MaterialType.transparency,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(24),
-                    onTap: onEmoteToggle,
-                    child: const Icon(Icons.emoji_emotions_outlined),
-                  ),
-                ),
-              ),
-              suffixIcon: SizedBox(
-                width: 48,
-                height: 48,
-                child: Material(
-                  type: MaterialType.transparency,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(24),
-                    onTap: enabled ? onSend : null,
-                    onLongPress: enabled ? onSendLongPress : null,
-                    child: Icon(
-                      Icons.send,
-                      color: enabled
-                          ? Theme.of(context).colorScheme.primary
-                          : Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withValues(alpha: 0.38),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            onChanged: (value) {
-              if (value.contains('\n')) {
-                controller.text = value.replaceAll('\n', '');
-                controller.selection = TextSelection.fromPosition(
-                  TextPosition(offset: controller.text.length),
-                );
-                onSend();
-              }
-            },
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ThreadPanelData {
-  final TwitchMessage root;
-  final List<TwitchMessage> messages;
-  final String channel;
-  _ThreadPanelData({
-    required this.root,
-    required this.messages,
-    required this.channel,
-  });
-}
-
-class _ThreadPanelWidget extends StatefulWidget {
-  final ScrollController scrollController;
-  final ValueListenable<_ThreadPanelData?> data;
-  final double uiScale;
-  final VoidCallback onClose;
-  final void Function(TwitchMessage) onLongPress;
-  final List<WidgetSpan> Function(String, TwitchMessage, {double badgeScale})
-  buildBadgeSpans;
-  final List<InlineSpan> Function(
-    TwitchMessage,
-    String,
-    Color, {
-    bool colored,
-    double textScale,
-  })
-  buildMessageSpans;
-
-  const _ThreadPanelWidget({
-    required this.scrollController,
-    required this.data,
-    required this.uiScale,
-    required this.onClose,
-    required this.onLongPress,
-    required this.buildBadgeSpans,
-    required this.buildMessageSpans,
-    super.key,
-  });
-
-  @override
-  State<_ThreadPanelWidget> createState() => _ThreadPanelWidgetState();
-}
-
-class _ThreadPanelWidgetState extends State<_ThreadPanelWidget> {
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<_ThreadPanelData?>(
-      valueListenable: widget.data,
-      builder: (context, data, _) {
-        final theme = Theme.of(context);
-        final surface = theme.colorScheme.surface;
-        final systemScale = MediaQuery.textScalerOf(context).scale(1.0);
-        final s = widget.uiScale * systemScale;
-
-        if (data == null) return const SizedBox.shrink();
-
-        final threadMsgs = data.messages;
-
-        return Material(
-          color: theme.scaffoldBackgroundColor,
-          clipBehavior: Clip.hardEdge,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Material(
-                elevation: 2,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.close),
-                        tooltip: 'Close reply thread',
-                        onPressed: widget.onClose,
-                      ),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: Text(
-                          'Reply Thread',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: theme.colorScheme.onSurface,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              Divider(height: 1, color: theme.dividerColor),
-              Expanded(
-                child: threadMsgs.isEmpty
-                    ? ListView(
-                        controller: widget.scrollController,
-                        padding: const EdgeInsets.only(bottom: 8),
-                        children: const [
-                          Center(child: Text('No messages found')),
-                        ],
-                      )
-                    : ListView.builder(
-                        controller: widget.scrollController,
-                        physics: const ClampingScrollPhysics(),
-                        reverse: true,
-                        padding: const EdgeInsets.only(bottom: 8),
-                        itemCount: threadMsgs.length,
-                        itemBuilder: (_, i) {
-                          final msg = threadMsgs[threadMsgs.length - 1 - i];
-                          final ts =
-                              '${msg.timestamp.toLocal().hour.toString().padLeft(2, '0')}:${msg.timestamp.toLocal().minute.toString().padLeft(2, '0')}';
-
-                          if (msg.isSystem) {
-                            return ChatMessageTile(
-                              timestamp: ts,
-                              isHistory: msg.isHistory,
-                              children: [TextSpan(text: msg.text)],
-                              timestampFontSize: 13 * s,
-                              bodyFontSize: 13 * s,
-                              bodyColor: msg.bodyColor,
-                              semanticsLabel: msg.text,
-                            );
-                          }
-
-                          return ChatMessageTile(
-                            timestamp: ts,
-                            deleted: msg.deleted,
-                            isHistory: msg.isHistory,
-                            bodyColor: msg.bodyColor,
-                            bodyFontSize: 14 * s,
-                            timestampFontSize: 14 * s,
-                            children: [
-                              if (msg.isAction) ...[
-                                ...widget.buildBadgeSpans(
-                                  data.channel,
-                                  msg,
-                                  badgeScale: s,
-                                ),
-                                TextSpan(
-                                  text: '${msg.username} ',
-                                  style: TextStyle(
-                                    fontSize: 14 * s,
-                                    fontWeight: FontWeight.w600,
-                                    color: parseColor(
-                                      msg.color,
-                                      background: surface,
-                                    ),
-                                  ),
-                                ),
-                                ...widget.buildMessageSpans(
-                                  msg,
-                                  data.channel,
-                                  surface,
-                                  colored: true,
-                                  textScale: s,
-                                ),
-                              ] else ...[
-                                ...widget.buildBadgeSpans(
-                                  data.channel,
-                                  msg,
-                                  badgeScale: s,
-                                ),
-                                TextSpan(
-                                  text: '${msg.username}: ',
-                                  style: TextStyle(
-                                    fontSize: 14 * s,
-                                    fontWeight: FontWeight.w600,
-                                    color: parseColor(
-                                      msg.color,
-                                      background: surface,
-                                    ),
-                                  ),
-                                ),
-                                ...widget.buildMessageSpans(
-                                  msg,
-                                  data.channel,
-                                  surface,
-                                  textScale: s,
-                                ),
-                              ],
-                            ],
-                            onLongPress: () => widget.onLongPress(msg),
-                            semanticsLabel: msg.isHighlighted
-                                ? 'Mention: $ts ${msg.username}: ${msg.text}'
-                                : '$ts ${msg.username}: ${msg.text}',
-                          );
-                        },
-                      ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _MentionsPanelWidget extends StatefulWidget {
-  final ScrollController scrollController;
-  final ValueListenable<List<TwitchMessage>?> messages;
-  final double uiScale;
-  final VoidCallback onClose;
-  final List<WidgetSpan> Function(String, TwitchMessage, {double badgeScale})
-  buildBadgeSpans;
-  final List<InlineSpan> Function(
-    TwitchMessage,
-    String,
-    Color, {
-    bool colored,
-    double textScale,
-  })
-  buildMessageSpans;
-
-  const _MentionsPanelWidget({
-    required this.scrollController,
-    required this.messages,
-    required this.uiScale,
-    required this.onClose,
-    required this.buildBadgeSpans,
-    required this.buildMessageSpans,
-    super.key,
-  });
-
-  @override
-  State<_MentionsPanelWidget> createState() => _MentionsPanelWidgetState();
-}
-
-class _MentionsPanelWidgetState extends State<_MentionsPanelWidget> {
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<List<TwitchMessage>?>(
-      valueListenable: widget.messages,
-      builder: (context, msgs, _) {
-        final theme = Theme.of(context);
-        final surface = theme.colorScheme.surface;
-        final systemScale = MediaQuery.textScalerOf(context).scale(1.0);
-        final s = widget.uiScale * systemScale;
-
-        final messageList = msgs ?? [];
-
-        if (msgs == null) return const SizedBox.shrink();
-
-        return Material(
-          color: theme.scaffoldBackgroundColor,
-          clipBehavior: Clip.hardEdge,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Material(
-                elevation: 2,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.arrow_back),
-                        tooltip: 'Back',
-                        onPressed: widget.onClose,
-                      ),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: Text(
-                          'Mentions / Whispers',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: theme.colorScheme.onSurface,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              Divider(height: 1, color: theme.dividerColor),
-              Expanded(
-                child: messageList.isEmpty
-                    ? CustomScrollView(
-                        controller: widget.scrollController,
-                        slivers: const [
-                          SliverFillRemaining(
-                            hasScrollBody: false,
-                            child: Center(
-                                child: Text('No mentions or whispers')),
-                          ),
-                        ],
-                      )
-                    : ListView.builder(
-                        controller: widget.scrollController,
-                        physics: const ClampingScrollPhysics(),
-                        reverse: true,
-                        padding: const EdgeInsets.only(bottom: 8),
-                        itemCount: messageList.length,
-                        itemBuilder: (_, i) {
-                          final msg = messageList[messageList.length - 1 - i];
-                          final ts =
-                              '${msg.timestamp.toLocal().hour.toString().padLeft(2, '0')}:${msg.timestamp.toLocal().minute.toString().padLeft(2, '0')}';
-
-                          if (msg.isSystem) {
-                            return ChatMessageTile(
-                              timestamp: ts,
-                              isHistory: msg.isHistory,
-                              children: [TextSpan(text: msg.text)],
-                              timestampFontSize: 13 * s,
-                              bodyFontSize: 13 * s,
-                              bodyColor: msg.bodyColor,
-                              semanticsLabel: msg.text,
-                            );
-                          }
-
-                          final channel = msg.channel ?? '';
-
-                          return ChatMessageTile(
-                            timestamp: ts,
-                            deleted: msg.deleted,
-                            isHistory: msg.isHistory,
-                            bodyColor: msg.bodyColor,
-                            bodyFontSize: 14 * s,
-                            timestampFontSize: 14 * s,
-                            children: [
-                              if (msg.isAction) ...[
-                                ...widget.buildBadgeSpans(
-                                  channel,
-                                  msg,
-                                  badgeScale: s,
-                                ),
-                                TextSpan(
-                                  text: '${msg.username} ',
-                                  style: TextStyle(
-                                    fontSize: 14 * s,
-                                    fontWeight: FontWeight.w600,
-                                    color: parseColor(
-                                      msg.color,
-                                      background: surface,
-                                    ),
-                                  ),
-                                ),
-                                ...widget.buildMessageSpans(
-                                  msg,
-                                  channel,
-                                  surface,
-                                  colored: true,
-                                  textScale: s,
-                                ),
-                              ] else ...[
-                                ...widget.buildBadgeSpans(
-                                  channel,
-                                  msg,
-                                  badgeScale: s,
-                                ),
-                                TextSpan(
-                                  text: '${msg.username}: ',
-                                  style: TextStyle(
-                                    fontSize: 14 * s,
-                                    fontWeight: FontWeight.w600,
-                                    color: parseColor(
-                                      msg.color,
-                                      background: surface,
-                                    ),
-                                  ),
-                                ),
-                                ...widget.buildMessageSpans(
-                                  msg,
-                                  channel,
-                                  surface,
-                                  textScale: s,
-                                ),
-                              ],
-                            ],
-                            semanticsLabel: msg.isHighlighted
-                                ? 'Mention: $ts ${msg.username}: ${msg.text}'
-                                : '$ts ${msg.username}: ${msg.text}',
-                          );
-                        },
-                      ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _EmoteMenuPanelWidget extends StatefulWidget {
-  final ScrollController scrollController;
-  final bool isActive;
-  final double uiScale;
-  final String? selectedChannel;
-  final void Function(GenericEmote) onEmoteSelected;
-  final VoidCallback onClose;
-  final EmoteManager emoteManager;
-  final DraggableScrollableController sheetCtrl;
-
-  const _EmoteMenuPanelWidget({
-    required this.scrollController,
-    required this.isActive,
-    required this.sheetCtrl,
-    required this.uiScale,
-    required this.selectedChannel,
-    required this.onEmoteSelected,
-    required this.onClose,
-    required this.emoteManager,
-    super.key,
-  });
-
-  @override
-  State<_EmoteMenuPanelWidget> createState() => _EmoteMenuPanelWidgetState();
-}
-
-class _EmoteMenuPanelWidgetState extends State<_EmoteMenuPanelWidget> {
-  int _emoteTabIndex = 0;
-  List<GenericEmote> _cachedRecentEmotes = [];
-  bool _recentEmotesLoaded = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadRecentEmotes();
-    widget.emoteManager.addListener(_loadRecentEmotes);
-  }
-
-  @override
-  void dispose() {
-    widget.emoteManager.removeListener(_loadRecentEmotes);
-    super.dispose();
-  }
-
-  Future<void> _loadRecentEmotes() async {
-    final recent = await widget.emoteManager.recentEmotes();
-    if (mounted) {
-      setState(() {
-        _cachedRecentEmotes = recent;
-        _recentEmotesLoaded = true;
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (!widget.isActive) return const SizedBox.shrink();
-    final theme = Theme.of(context);
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 4),
-      decoration: BoxDecoration(
-        color: theme.scaffoldBackgroundColor,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.15),
-            blurRadius: 8,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      clipBehavior: Clip.hardEdge,
-      child: Column(
-        children: [
-          GestureDetector(
-            key: const Key('emote_panel_handle'),
-            behavior: HitTestBehavior.opaque,
-            onVerticalDragUpdate: (details) {
-              final newPixels = widget.sheetCtrl.pixels - details.primaryDelta!;
-              final newSize = widget.sheetCtrl.pixelsToSize(newPixels).clamp(0.0, 1.0);
-              if (widget.sheetCtrl.isAttached) {
-                widget.sheetCtrl.jumpTo(newSize);
-              }
-            },
-            onVerticalDragEnd: (details) {
-              if (!widget.sheetCtrl.isAttached) return;
-              final velocity = details.primaryVelocity ?? 0;
-              if (widget.sheetCtrl.size < 0.3 || velocity > 400) {
-                widget.onClose();
-              } else {
-                widget.sheetCtrl.animateTo(
-                  _HomeScreenState._emoteMaxFraction,
-                  duration: _HomeScreenState._sheetAnimDuration,
-                  curve: Curves.easeOut,
-                );
-              }
-            },
-            child: Padding(
-              padding: const EdgeInsets.only(top: 12, bottom: 16),
-              child: Center(
-                child: SizedBox(
-                  width: 32,
-                  height: 4,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Colors.grey,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Expanded(
-            child: TabbedLayout(
-              tabAlignment: Alignment.center,
-              tabs: const ['Recent', 'Subs', 'Channel', 'Global'],
-              selectedIndex: _emoteTabIndex,
-              onSelectedIndexChanged: (i) => setState(() => _emoteTabIndex = i),
-              pageBuilder: (_, i) => _buildEmoteTabPage(
-                i,
-                i == _emoteTabIndex ? widget.scrollController : null,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEmoteTabPage(int tabIndex, ScrollController? scrollController) {
-    switch (tabIndex) {
-      case 0:
-        return _buildEmoteRecentGrid(scrollController);
-      case 1:
-        return _buildEmoteSubsGrid(scrollController);
-      case 2:
-        return _buildEmoteChannelGrid(scrollController);
-      case 3:
-        return _buildEmoteGlobalGrid(scrollController);
-      default:
-        return const SizedBox();
-    }
-  }
-
-  Widget _buildEmoteRecentGrid(ScrollController? scrollController) {
-    if (!_recentEmotesLoaded) {
-      return _buildEmoteEmptyState(
-        scrollController,
-        const Center(child: CircularProgressIndicator(strokeWidth: 2)),
-      );
-    }
-    if (_cachedRecentEmotes.isEmpty) {
-      return _buildEmoteEmptyState(
-        scrollController,
-        const Center(child: Text('No recently used emotes')),
-      );
-    }
-    return _buildEmoteGrid(_cachedRecentEmotes, scrollController);
-  }
-
-  Widget _buildEmoteSubsGrid(ScrollController? scrollController) {
-    final byChannel = widget.emoteManager.subscriberEmotesByChannel();
-    if (byChannel.isEmpty) {
-      return _buildEmoteEmptyState(
-        scrollController,
-        const Center(child: Text('No subscriber emotes available')),
-      );
-    }
-    return CustomScrollView(
-      controller: scrollController,
-      slivers: [
-        for (final entry in byChannel.entries) ...[
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.only(left: 8, top: 8, right: 8),
-              child: Text(
-                entry.key,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13,
-                ),
-              ),
-            ),
-          ),
-          SliverGrid(
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 5,
-              mainAxisSpacing: 8,
-              crossAxisSpacing: 8,
-              childAspectRatio: 1,
-            ),
-            delegate: SliverChildBuilderDelegate(
-              (_, i) => _buildEmoteGridItem(entry.value[i]),
-              childCount: entry.value.length,
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildEmoteChannelGrid(ScrollController? scrollController) {
-    final channel = widget.selectedChannel ?? '';
-    final emotes = widget.emoteManager.channelNonTwitchEmotes(channel);
-    if (emotes.isEmpty) {
-      return _buildEmoteEmptyState(
-        scrollController,
-        const Center(child: Text('No channel emotes')),
-      );
-    }
-    return _buildEmoteGrid(emotes, scrollController);
-  }
-
-  Widget _buildEmoteGlobalGrid(ScrollController? scrollController) {
-    final emotes = widget.emoteManager.globalEmotes();
-    if (emotes.isEmpty) {
-      return _buildEmoteEmptyState(
-        scrollController,
-        const Center(child: Text('No global emotes')),
-      );
-    }
-    return _buildEmoteGrid(emotes, scrollController);
-  }
-
-  /// Keeps [scrollController] attached (so [DraggableScrollableController]
-  /// stays usable) while ensuring [child] fills the viewport via
-  /// [SliverFillRemaining] — otherwise a bare [Center] inside [ListView]
-  /// shrink-wraps to its child and sits at the top.
-  Widget _buildEmoteEmptyState(
-    ScrollController? scrollController,
-    Widget child,
-  ) {
-    if (scrollController == null) return child;
-    return CustomScrollView(
-      controller: scrollController,
-      slivers: [
-        SliverFillRemaining(child: child),
-      ],
-    );
-  }
-
-  Widget _buildEmoteGrid(
-    List<GenericEmote> emotes,
-    ScrollController? scrollController,
-  ) {
-    return GridView.builder(
-      controller: scrollController,
-      padding: const EdgeInsets.all(4),
-      physics: const AlwaysScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 5,
-        mainAxisSpacing: 8,
-        crossAxisSpacing: 8,
-        childAspectRatio: 1,
-      ),
-      itemCount: emotes.length,
-      itemBuilder: (_, i) => _buildEmoteGridItem(emotes[i]),
-    );
-  }
-
-  Widget _buildEmoteGridItem(GenericEmote emote) {
-    return Material(
-      type: MaterialType.transparency,
-      clipBehavior: Clip.hardEdge,
-      child: InkWell(
-        onTap: () => widget.onEmoteSelected(emote),
-        child: CachedNetworkImage(
-          imageUrl: emote.url,
-          fit: BoxFit.contain,
-          placeholder: (_, _) => const SizedBox(),
-          errorWidget: (_, _, _) => const Icon(Icons.broken_image, size: 20),
-        ),
-      ),
-    );
-  }
-}
-
-class _PendingLocal {
-  final String channel;
-  final String text;
-  _PendingLocal(this.channel, this.text);
 }
