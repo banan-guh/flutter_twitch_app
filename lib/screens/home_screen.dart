@@ -74,7 +74,6 @@ class _HomeScreenState extends State<HomeScreen>
     eventSub: _eventSub,
     irc: _irc,
     ircRead: _ircRead,
-    recentMessages: _recentMessages,
     emoteManager: _emoteManager,
     badgeService: _badgeService,
     userStore: _userStore,
@@ -100,7 +99,6 @@ class _HomeScreenState extends State<HomeScreen>
     },
     onSystemMessage: _addSystemMessage,
     loadUserTwitchEmotes: _loadUserTwitchEmotes,
-    onTruncateChannelMessages: _truncateChannelMessages,
     getMaxMessagesPerChannel: () => _maxMessagesPerChannel,
     getSelectedChannel: () => _selectedChannel,
     getUnreadMentions: () => _unreadMentions,
@@ -170,16 +168,6 @@ class _HomeScreenState extends State<HomeScreen>
   final _threadPanelData = ValueNotifier<ThreadPanelData?>(null);
   final _mentionsPanelData = ValueNotifier<List<TwitchMessage>?>(null);
 
-  StreamSubscription<TwitchMessage>? _messageSub;
-  StreamSubscription<EventSubStatus>? _statusSub;
-  StreamSubscription<({String messageId, String targetUser, String channel})>?
-  _deleteSub;
-  StreamSubscription<IrcBanEvent>? _ircBanSub;
-  StreamSubscription<IrcNoticeEvent>? _ircNoticeSub;
-  StreamSubscription<IrcNoticeEvent>? _ircJtvSub;
-  StreamSubscription<IrcMessage>? _ircOwnMsgSub;
-  StreamSubscription<String>? _userColorSub;
-
   final _ownMessageIds = <String>{};
   final _pendingLocals = <String, PendingLocal>{};
 
@@ -224,7 +212,7 @@ class _HomeScreenState extends State<HomeScreen>
     _chatVersion.addListener(_onPanelDataChanged);
     _loadMaxMessages();
     _loadChannels();
-    _connect();
+    _chatConn.connect();
     _emoteManager.accessToken = widget.twitchAuth.accessToken;
     _emoteManager.preloadGlobalEmotes();
     _emoteManager.addListener(_onEmotesChanged);
@@ -472,12 +460,8 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   void dispose() {
-    _chatConn.mounted = false;
+    _chatConn.dispose();
     WidgetsBinding.instance.removeObserver(this);
-    _messageSub?.cancel();
-    _statusSub?.cancel();
-    _deleteSub?.cancel();
-    _ircBanSub?.cancel();
     _eventSub.dispose();
     _irc.dispose();
     _ircRead.dispose();
@@ -486,11 +470,6 @@ class _HomeScreenState extends State<HomeScreen>
     _messageController.dispose();
     _focusNode.removeListener(_onInputFocusChanged);
     _focusNode.dispose();
-    _ircOwnMsgSub?.cancel();
-    _userColorSub?.cancel();
-    _ircBanSub?.cancel();
-    _ircNoticeSub?.cancel();
-    _ircJtvSub?.cancel();
     _chatVersion.removeListener(_onPanelDataChanged);
     _threadSheetCtrl.dispose();
     _mentionsSheetCtrl.dispose();
@@ -502,10 +481,6 @@ class _HomeScreenState extends State<HomeScreen>
     }
     _chatVersion.dispose();
     super.dispose();
-  }
-
-  Future<void> _connect() async {
-    _chatConn.connect();
   }
 
   void _addSystemMessage(String channel, String text) {
@@ -1172,7 +1147,7 @@ class _HomeScreenState extends State<HomeScreen>
                                     onAddChannel: _addChannel,
                                     onSettingsClosed: () {
                                       if (mounted) setState(() {});
-                                      _connect();
+                                      _chatConn.connect();
                                     },
                                     eventSubMessageStream: _eventSub.onMessage,
                                   ),

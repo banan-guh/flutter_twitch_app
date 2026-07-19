@@ -8,7 +8,6 @@ import '../services/twitch_auth.dart';
 import '../services/twitch_eventsub.dart';
 import '../services/twitch_irc.dart';
 import '../services/twitch_irc_read.dart';
-import '../services/recent_messages.dart';
 import '../services/emote_manager.dart';
 import '../services/twitch_badge_service.dart';
 import '../services/user_store.dart';
@@ -18,11 +17,11 @@ class ChatConnectionManager {
   final EventSubService eventSub;
   final IrcService irc;
   final IrcReadService ircRead;
-  final RecentMessagesService recentMessages;
-  final EmoteManager emoteManager;
   final TwitchBadgeService badgeService;
   final UserStore userStore;
   final TwitchAuth twitchAuth;
+
+  final EmoteManager emoteManager;
 
   final Map<String, List<TwitchMessage>> channelMessages;
   final Map<String, GlobalKey> messageKeys;
@@ -62,7 +61,6 @@ class ChatConnectionManager {
   final VoidCallback onRebuild;
   final void Function(String, String) onSystemMessage;
   final Future<void> Function() loadUserTwitchEmotes;
-  final void Function(String) onTruncateChannelMessages;
   final int Function() getMaxMessagesPerChannel;
   final String? Function() getSelectedChannel;
   final int Function() getUnreadMentions;
@@ -83,7 +81,6 @@ class ChatConnectionManager {
     required this.eventSub,
     required this.irc,
     required this.ircRead,
-    required this.recentMessages,
     required this.emoteManager,
     required this.badgeService,
     required this.userStore,
@@ -107,7 +104,6 @@ class ChatConnectionManager {
     required this.onRebuild,
     required this.onSystemMessage,
     required this.loadUserTwitchEmotes,
-    required this.onTruncateChannelMessages,
     required this.getMaxMessagesPerChannel,
     required this.getSelectedChannel,
     required this.getUnreadMentions,
