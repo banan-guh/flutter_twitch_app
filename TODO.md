@@ -19,13 +19,14 @@
 
 ## Medium Priority
 
+- [ ] **Rearrange-ability of 
 - [ ] **Documentation** - Add comprehensive comments throughout the codebase explaining architecture, data flow, key design decisions, and non-obvious logic (e.g. EventSub vs IRC split, underline animation system, thread panel architecture).
 - [x] **/me handling** - `/me` messages detected from `\x01ACTION ... \x01` wrapping in both EventSub and IRC. Rendered as `username message` (no colon, message colored like username) in all 3 views.
 - [x] **Unread indicator** - Channel tab name is white when there are unread messages, grey when all are read.
 - [ ] **Localized display names** - Research how Twitch handles localized/non-ASCII display names and ensure the app handles them correctly.
 
 ## Bugs
-
+- [ ] **Threads decay needs to be fixed**
 - [ ] **Ping happening with system messages** - Ping (unread) should not activate on a system message, currently does.
 - [ ] **Live color change broken** - color not updating live after /color. Need to test with other people as well.
 - [ ] **Timeout not showing** - both as system message and 35% opacity message.

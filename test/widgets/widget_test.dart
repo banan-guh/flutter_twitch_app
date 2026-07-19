@@ -11,6 +11,7 @@ import 'package:flutter_twitch_app/services/twitch_irc.dart';
 import 'package:flutter_twitch_app/services/recent_messages.dart';
 import 'package:flutter_twitch_app/services/twitch_auth.dart';
 import 'package:flutter_twitch_app/models/twitch_message.dart';
+import 'package:flutter_twitch_app/services/twitch_irc_read.dart';
 
 class _FakeEventSubService extends EventSubService {
   final _statusCtrl = StreamController<EventSubStatus>.broadcast(sync: true);
@@ -163,6 +164,30 @@ class _FakeIrcService extends IrcService {
     _noticeCtrl.close();
     super.dispose();
   }
+}
+
+class _FakeIrcReadService extends IrcReadService {
+  final _colorCtrl = StreamController<String>.broadcast(sync: true);
+
+  @override
+  Stream<String> get onUserColor => _colorCtrl.stream;
+
+  @override
+  Future<void> connect({required String username, required String accessToken}) async {}
+
+  @override
+  void join(String channel) {}
+
+  @override
+  void part(String channel) {}
+
+  @override
+  void dispose() {
+    _colorCtrl.close();
+    super.dispose();
+  }
+
+  void emitColor(String color) => _colorCtrl.add(color);
 }
 
 class _ConfigurableRecentMessagesService extends RecentMessagesService {
@@ -1166,9 +1191,10 @@ void main() {
       WidgetTester tester, {
       required _FakeEventSubService eventSub,
       required _FakeIrcService irc,
+      RecentMessagesService? recent,
     }) async {
       SharedPreferences.setMockInitialValues({'access_token': 'test_token'});
-      final fakeRecent = _FakeRecentMessagesService();
+      final fakeRecent = recent ?? _FakeRecentMessagesService();
 
       await tester.pumpWidget(
         TwitchChatApp(
@@ -1308,7 +1334,153 @@ void main() {
 
       expect(find.textContaining('Disconnected'), findsOneWidget);
     });
+
+    testWidgets(
+      'system message on unfocused channel does not trigger unread indicator',
+      (WidgetTester tester) async {
+        SharedPreferences.setMockInitialValues({'access_token': 'test_token'});
+        final eventSub = _FakeEventSubService();
+        final irc = _FakeIrcService();
+        final recent = _FakeRecentMessagesService();
+
+        await tester.pumpWidget(
+          TwitchChatApp(
+            eventSubService: eventSub,
+            ircService: irc,
+            recentMessagesService: recent,
+          ),
+        );
+        await tester.pump();
+
+        for (final name in ['channelB', 'channelA']) {
+          await tester.tap(find.byIcon(Icons.add));
+          await tester.pumpAndSettle();
+          await tester.enterText(find.byType(TextField).last, name);
+          await tester.tap(find.text('Join'));
+          await tester.pump();
+          await tester.pump();
+        }
+
+        irc.emitNotice('channelB', 'This room requires a verified email.');
+        await tester.pump();
+
+        final channelBTabs = tester.widgetList<Text>(find.text('channelB'));
+        expect(
+          channelBTabs.every(
+            (t) =>
+                (t.style?.fontWeight ?? FontWeight.normal) ==
+                    FontWeight.normal &&
+                t.style?.color == null,
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    testWidgets('EventSub ban shows system message', (
+      WidgetTester tester,
+    ) async {
+      final eventSub = _FakeEventSubService();
+      final irc = _FakeIrcService();
+      await setupChannel(tester, eventSub: eventSub, irc: irc);
+
+      eventSub.emitBan('baduser', isTimeout: false, channel: 'testchannel');
+      await tester.pump();
+
+      expect(find.textContaining('baduser was banned'), findsOneWidget);
+    });
+
+    testWidgets(
+      'banned user messages render at 35% opacity',
+      (WidgetTester tester) async {
+        final eventSub = _FakeEventSubService();
+        final irc = _FakeIrcService();
+        final recent = _ConfigurableRecentMessagesService([
+          TwitchMessage(
+            username: 'bob',
+            text: 'i am a bad person',
+            channel: 'testchannel',
+            messageId: 'bad-1',
+          ),
+          TwitchMessage(
+            username: 'gooduser',
+            text: 'i am nice',
+            channel: 'testchannel',
+            messageId: 'good-1',
+          ),
+        ]);
+        await setupChannel(
+          tester,
+          eventSub: eventSub,
+          irc: irc,
+          recent: recent,
+        );
+
+        irc.emitBan('bob', isTimeout: false, channel: 'testchannel');
+        await tester.pump();
+
+        final opacityWidgets = tester.widgetList<Opacity>(
+          find.ancestor(
+            of: find.textContaining('i am a bad person'),
+            matching: find.byType(Opacity),
+          ),
+        );
+        expect(opacityWidgets.any((o) => o.opacity == 0.35), isTrue);
+      },
+    );
   });
+
+  testWidgets(
+    'color change updates own messages without crashing',
+    (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({'access_token': 'test_token'});
+      final eventSub = _FakeEventSubService();
+      final irc = _FakeIrcService();
+      final ircRead = _FakeIrcReadService();
+      final recent = _ConfigurableRecentMessagesService([
+        TwitchMessage(
+          username: 'testuser',
+          text: 'hello from me',
+          channel: 'testchannel',
+          messageId: 'own-1',
+          color: '#FF0000',
+        ),
+        TwitchMessage(
+          username: 'otheruser',
+          text: 'hello from other',
+          channel: 'testchannel',
+          messageId: 'other-1',
+          color: '#00FF00',
+        ),
+      ]);
+
+      await tester.pumpWidget(
+        TwitchChatApp(
+          eventSubService: eventSub,
+          ircService: irc,
+          ircReadService: ircRead,
+          recentMessagesService: recent,
+          initialCurrentUserLogin: 'testuser',
+        ),
+      );
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.add));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).last, 'testchannel');
+      await tester.tap(find.text('Join'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.textContaining('testuser:'), findsOneWidget);
+      expect(find.textContaining('hello from me'), findsOneWidget);
+
+      ircRead.emitColor('#0000FF');
+      await tester.pump();
+
+      expect(find.textContaining('testuser:'), findsOneWidget);
+      expect(find.textContaining('hello from me'), findsOneWidget);
+    },
+  );
 
   group('Settings screen', () {
     testWidgets('idle state shows login button', (WidgetTester tester) async {

@@ -13,6 +13,7 @@ import '../services/twitch_eventsub.dart';
 import '../services/twitch_irc.dart';
 import '../services/twitch_irc_read.dart';
 import '../services/recent_messages.dart';
+import '../services/seven_tv_event_client.dart';
 import '../services/command_handler.dart';
 import '../services/chat_connection_manager.dart';
 import '../services/emote_manager.dart';
@@ -44,6 +45,7 @@ class HomeScreen extends StatefulWidget {
   final IrcService? ircService;
   final IrcReadService? ircReadService;
   final RecentMessagesService? recentMessagesService;
+  final SevenTvEventClient? sevenTvEventClient;
   final String? initialCurrentUserLogin;
 
   const HomeScreen({
@@ -54,6 +56,7 @@ class HomeScreen extends StatefulWidget {
     this.ircService,
     this.ircReadService,
     this.recentMessagesService,
+    this.sevenTvEventClient,
     this.initialCurrentUserLogin,
   });
 
@@ -70,10 +73,13 @@ class _HomeScreenState extends State<HomeScreen>
   late final _ircRead = widget.ircReadService ?? IrcReadService();
   late final _recentMessages =
       widget.recentMessagesService ?? RecentMessagesService();
+  late final _sevenTvClient =
+      widget.sevenTvEventClient ?? SevenTvEventClient();
   late final _chatConn = ChatConnectionManager(
     eventSub: _eventSub,
     irc: _irc,
     ircRead: _ircRead,
+    sevenTvClient: _sevenTvClient,
     emoteManager: _emoteManager,
     badgeService: _badgeService,
     userStore: _userStore,
@@ -465,6 +471,7 @@ class _HomeScreenState extends State<HomeScreen>
     _eventSub.dispose();
     _irc.dispose();
     _ircRead.dispose();
+    _sevenTvClient.dispose();
     _emoteManager.removeListener(_onEmotesChanged);
     widget.twitchAuth.removeListener(_onAuthChanged);
     _messageController.dispose();
@@ -484,6 +491,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _addSystemMessage(String channel, String text) {
+    debugPrint('[HomeScreen] _addSystemMessage channel=$channel text=$text');
     setState(() {
       _channelMessages.putIfAbsent(channel, () => []);
       _channelMessages[channel]!.insert(
@@ -496,9 +504,6 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       );
       _truncateChannelMessages(channel);
-      if (channel != _selectedChannel) {
-        _channelsWithUnread.add(channel);
-      }
     });
   }
 
@@ -683,8 +688,7 @@ class _HomeScreenState extends State<HomeScreen>
       return;
     }
 
-    _ircRead.join(name);
-
+    debugPrint('[HomeScreen] joining channel: $name');
     await _subscribeChannel(name);
 
     if (mounted) setState(() {});
@@ -730,6 +734,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _removeChannel(String channel) {
+    _irc.part(channel);
     _ircRead.part(channel);
     _emoteManager.evictChannel(channel);
     _channelsEmotesResolved.remove(channel);

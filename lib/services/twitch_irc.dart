@@ -42,6 +42,7 @@ class IrcService {
   final _banController = StreamController<IrcBanEvent>.broadcast();
   final _noticeController = StreamController<IrcNoticeEvent>.broadcast();
   final _jtvController = StreamController<IrcNoticeEvent>.broadcast();
+  final _channels = <String>{};
 
   Stream<IrcBanEvent> get onBan => _banController.stream;
   Stream<IrcNoticeEvent> get onNotice => _noticeController.stream;
@@ -83,6 +84,11 @@ class IrcService {
       _send('CAP REQ :twitch.tv/tags twitch.tv/commands');
       _send('PASS oauth:$_token');
       _send('NICK $_username');
+      debugPrint('[IRC] connected, re-joining ${_channels.length} channels: $_channels');
+
+      for (final channel in _channels) {
+        _send('JOIN #$channel');
+      }
 
       _pingTimer?.cancel();
       _pingTimer = Timer.periodic(const Duration(seconds: 15), (_) {
@@ -153,18 +159,23 @@ class IrcService {
         continue;
       }
 
+      debugPrint('[IRC] line: $line');
+
       if (line.contains('CLEARCHAT ')) {
+        debugPrint('[IRC] matched CLEARCHAT');
         _handleClearChat(line);
         continue;
       }
 
       if (line.contains('NOTICE ')) {
+        debugPrint('[IRC] matched NOTICE');
         _handleNotice(line);
         continue;
       }
 
       // Twitch sends command responses (e.g. /color) as PRIVMSG from jtv
       if (line.contains('PRIVMSG ') && line.contains(':jtv ')) {
+        debugPrint('[IRC] matched jtv PRIVMSG');
         _handleJtvMessage(line);
         continue;
       }
@@ -173,18 +184,29 @@ class IrcService {
 
   void _handleClearChat(String line) {
     final msg = parseIrcMessage(line);
-    if (msg == null || msg.command != 'CLEARCHAT') return;
+    if (msg == null || msg.command != 'CLEARCHAT') {
+      debugPrint('[IRC] CLEARCHAT parse failed or wrong command');
+      return;
+    }
 
     final channel = msg.params.isNotEmpty ? msg.params[0].substring(1) : null;
-    if (channel == null) return;
+    if (channel == null) {
+      debugPrint('[IRC] CLEARCHAT no channel');
+      return;
+    }
 
     final targetUser = msg.trailing;
-    if (targetUser == null || targetUser.isEmpty) return;
+    if (targetUser == null || targetUser.isEmpty) {
+      debugPrint('[IRC] CLEARCHAT no target user');
+      return;
+    }
 
     final banDuration = msg.tags['ban-duration'];
     final targetUserId = msg.tags['target-user-id'];
     final isTimeout = banDuration != null;
     final duration = isTimeout ? int.tryParse(banDuration) : null;
+
+    debugPrint('[IRC] emitting ban: user=$targetUser channel=$channel isTimeout=$isTimeout duration=$duration');
 
     _banController.add(
       IrcBanEvent(
@@ -234,6 +256,22 @@ class IrcService {
         : '';
     final msg = '${tag}PRIVMSG #$channel :$text';
     _send(msg);
+  }
+
+  void join(String channel) {
+    debugPrint('[IRC] join channel=$channel');
+    _channels.add(channel);
+    if (_channel != null) {
+      _send('JOIN #$channel');
+    }
+  }
+
+  void part(String channel) {
+    debugPrint('[IRC] part channel=$channel');
+    _channels.remove(channel);
+    if (_channel != null) {
+      _send('PART #$channel');
+    }
   }
 
   void dispose() {

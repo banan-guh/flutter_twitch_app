@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/widgets.dart';
+import 'package:http/http.dart' as http;
 import '../models/generic_emote.dart';
 import '../models/twitch_message.dart';
 import '../color_utils.dart';
@@ -9,6 +11,8 @@ import '../services/twitch_eventsub.dart';
 import '../services/twitch_irc.dart';
 import '../services/twitch_irc_read.dart';
 import '../services/emote_manager.dart';
+import '../services/emote_providers/seven_tv_emotes.dart';
+import '../services/seven_tv_event_client.dart';
 import '../services/twitch_badge_service.dart';
 import '../services/user_store.dart';
 import '../util/text_bypass.dart';
@@ -17,6 +21,7 @@ class ChatConnectionManager {
   final EventSubService eventSub;
   final IrcService irc;
   final IrcReadService ircRead;
+  final SevenTvEventClient? sevenTvClient;
   final TwitchBadgeService badgeService;
   final UserStore userStore;
   final TwitchAuth twitchAuth;
@@ -53,10 +58,13 @@ class ChatConnectionManager {
   StreamSubscription<({String messageId, String targetUser, String channel})>?
   deleteSub;
   StreamSubscription<IrcBanEvent>? ircBanSub;
+  StreamSubscription<({String user, String? reason, bool isTimeout, String? duration, String channel})>? eventSubBanSub;
   StreamSubscription<IrcNoticeEvent>? ircNoticeSub;
   StreamSubscription<IrcNoticeEvent>? ircJtvSub;
   StreamSubscription<IrcMessage>? ircOwnMsgSub;
   StreamSubscription<String>? userColorSub;
+  StreamSubscription<SevenTvEmoteUpdateEvent>? sevenTvEmoteSub;
+  StreamSubscription<SevenTvUserUpdate>? sevenTvUserSub;
 
   final VoidCallback onRebuild;
   final void Function(String, String) onSystemMessage;
@@ -81,6 +89,7 @@ class ChatConnectionManager {
     required this.eventSub,
     required this.irc,
     required this.ircRead,
+    this.sevenTvClient,
     required this.emoteManager,
     required this.badgeService,
     required this.userStore,
@@ -126,11 +135,32 @@ class ChatConnectionManager {
     messageSub?.cancel();
     statusSub?.cancel();
     deleteSub?.cancel();
+    eventSubBanSub?.cancel();
     ircBanSub?.cancel();
     ircNoticeSub?.cancel();
     ircJtvSub?.cancel();
     ircOwnMsgSub?.cancel();
     userColorSub?.cancel();
+    sevenTvEmoteSub?.cancel();
+    sevenTvUserSub?.cancel();
+  }
+
+  void _markUserMessagesDeleted(String channel, String username) {
+    final msgs = channelMessages[channel];
+    if (msgs == null) {
+      debugPrint('[ChatConn] _markUserMessagesDeleted: no messages for channel=$channel');
+      return;
+    }
+    var count = 0;
+    for (final msg in msgs) {
+      if (msg.username.toLowerCase() == username.toLowerCase() &&
+          !msg.isSystem &&
+          !msg.deleted) {
+        msg.deleted = true;
+        count++;
+      }
+    }
+    debugPrint('[ChatConn] _markUserMessagesDeleted: marked $count messages deleted for user=$username in channel=$channel (total msgs in channel=${msgs.length})');
   }
 
   void maybeAddConnected(String channel) {
@@ -271,6 +301,9 @@ class ChatConnectionManager {
   }
 
   Future<void> subscribeChannel(String channelName) async {
+    irc.join(channelName);
+    ircRead.join(channelName);
+
     try {
       final auth = twitchAuth;
       final channelUserId = await TwitchApi.getUserId(auth, channelName);
@@ -287,6 +320,8 @@ class ChatConnectionManager {
         await emoteManager.resolveEmotes(channelName, channelUserId);
         channelsEmotesResolved.add(channelName);
       }
+
+      unawaited(_resolveSevenTvAndSubscribe(channelName, channelUserId));
 
       if (getCurrentUserLogin() == null) {
         final currentUser = await TwitchApi.getCurrentUser(auth);
@@ -346,6 +381,83 @@ class ChatConnectionManager {
 
     onRebuild();
     fetchChatStatus(channelName);
+  }
+
+  Future<void> _resolveSevenTvAndSubscribe(
+    String channelName,
+    String twitchChannelId,
+  ) async {
+    if (sevenTvClient == null) return;
+    try {
+      final uri = Uri.parse('https://7tv.io/v3/users/twitch/$twitchChannelId');
+      final res = await http.get(uri);
+      if (res.statusCode != 200) return;
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      final userId = data['id'] as String?;
+      final emoteSet =
+          data['emote_set'] as Map<String, dynamic>?;
+      final emoteSetId = emoteSet?['id'] as String?;
+      if (userId == null || emoteSetId == null) return;
+      emoteManager.setSevenTvEmoteSetId(channelName, emoteSetId);
+      sevenTvClient!.subscribeEmoteSet(emoteSetId);
+      sevenTvClient!.subscribeUser(userId);
+      debugPrint(
+        '[7TV] subscribed channel=$channelName emoteSetId=$emoteSetId userId=$userId',
+      );
+    } catch (_) {}
+  }
+
+  void _onSevenTvEmoteSetUpdate(SevenTvEmoteUpdateEvent event) {
+    final channel = emoteManager.getChannelForSevenTvEmoteSet(event.emoteSetId);
+    if (channel == null) return;
+
+    final added = event.added
+        .map((e) => SevenTvEmoteProvider.parseSingleEmote(e.raw, channel: true))
+        .whereType<GenericEmote>()
+        .toList();
+    final removedIds =
+        event.removed.map((e) => e.id).toList();
+    final renamed = <String, ({String newName, String oldName})>{};
+    for (final r in event.renamed) {
+      renamed[r.id] = (newName: r.newName, oldName: r.oldName);
+    }
+
+    emoteManager.updateSevenTvEmotes(
+      channel,
+      added: added,
+      removedIds: removedIds,
+      renamed: renamed,
+    );
+
+    final actor = event.actor ?? 'A user';
+    for (final e in event.added) {
+      onSystemMessage(channel, '$actor added 7TV Emote ${e.name}.');
+    }
+    for (final e in event.removed) {
+      onSystemMessage(channel, '$actor removed 7TV Emote ${e.name}.');
+    }
+    for (final e in event.renamed) {
+      onSystemMessage(
+        channel,
+        '$actor renamed 7TV Emote ${e.oldName} to ${e.newName}.',
+      );
+    }
+  }
+
+  void _onSevenTvUserUpdate(SevenTvUserUpdate event) {
+    final channel = emoteManager.getChannelForSevenTvEmoteSet(
+      event.oldEmoteSetId,
+    );
+    if (channel == null) return;
+    sevenTvClient?.unsubscribeEmoteSet(event.oldEmoteSetId);
+    sevenTvClient?.subscribeEmoteSet(event.newEmoteSetId);
+    emoteManager.setSevenTvEmoteSetId(channel, event.newEmoteSetId);
+
+    final actor = event.actor ?? 'A user';
+    onSystemMessage(
+      channel,
+      '$actor switched the active 7TV Emote Set.',
+    );
   }
 
   Future<void> subscribeAll() async {
@@ -442,10 +554,25 @@ class ChatConnectionManager {
 
     ircBanSub?.cancel();
     ircBanSub = irc.onBan.listen((event) {
+      debugPrint('[ChatConn] IRC ban received: user=${event.user} channel=${event.channel} isTimeout=${event.isTimeout}');
       if (!mounted) return;
+      _markUserMessagesDeleted(event.channel, event.user);
       final text = event.isTimeout
           ? '${event.user} was timed out${event.duration != null ? ' for ${event.duration}s' : ''}.'
           : '${event.user} was banned.';
+      debugPrint('[ChatConn] IRC ban system message: $text');
+      onSystemMessage(event.channel, text);
+    });
+
+    eventSubBanSub?.cancel();
+    eventSubBanSub = eventSub.onBan.listen((event) {
+      debugPrint('[ChatConn] EventSub ban received: user=${event.user} channel=${event.channel} isTimeout=${event.isTimeout}');
+      if (!mounted) return;
+      _markUserMessagesDeleted(event.channel, event.user);
+      final text = event.isTimeout
+          ? '${event.user} was timed out${event.duration != null ? ' for ${event.duration}s' : ''}.'
+          : '${event.user} was banned.';
+      debugPrint('[ChatConn] EventSub ban system message: $text');
       onSystemMessage(event.channel, text);
     });
 
@@ -467,9 +594,30 @@ class ChatConnectionManager {
     userColorSub?.cancel();
     userColorSub = ircRead.onUserColor.listen((color) {
       setCurrentUserColor(color);
+      final login = getCurrentUserLogin();
+      if (login != null) {
+        final lowerLogin = login.toLowerCase();
+        for (final entry in channelMessages.entries) {
+          for (final msg in entry.value) {
+            if (msg.username.toLowerCase() == lowerLogin && !msg.isSystem) {
+              msg.color = color;
+            }
+          }
+        }
+      }
+      chatVersion.value++;
+      onRebuild();
     });
 
     if (!auth.isConfigured) return;
+
+    if (sevenTvClient != null) {
+      sevenTvEmoteSub?.cancel();
+      sevenTvEmoteSub = sevenTvClient!.onEmoteSetUpdate.listen(_onSevenTvEmoteSetUpdate);
+      sevenTvUserSub?.cancel();
+      sevenTvUserSub = sevenTvClient!.onUserUpdate.listen(_onSevenTvUserUpdate);
+      sevenTvClient!.connect();
+    }
 
     statusSub?.cancel();
     statusSub = eventSub.onStatus.listen((status) async {
@@ -626,7 +774,7 @@ class ChatConnectionManager {
     chatVersion.value++;
 
     var needsHeaderRebuild = false;
-    if (channel != getSelectedChannel() && !msg.isHistory) {
+    if (channel != getSelectedChannel() && !msg.isHistory && !msg.isSystem) {
       channelsWithUnread.add(channel);
       needsHeaderRebuild = true;
     }

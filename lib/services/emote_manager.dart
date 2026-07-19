@@ -30,6 +30,7 @@ class EmoteManager extends ChangeNotifier {
   final _channelFetchTimes = <String, DateTime>{};
   final _lastErrors = <String, String>{};
   final _channelTwitchEmotes = <String, List<GenericEmote>>{};
+  final _sevenTvEmoteSetIds = <String, String>{};
   String? _accessToken;
 
   set accessToken(String? value) => _accessToken = value;
@@ -217,10 +218,76 @@ class EmoteManager extends ChangeNotifier {
     _channelCaches.remove(channel);
     _channelFetchTimes.remove(channel);
     _channelTwitchEmotes.remove(channel);
+    _sevenTvEmoteSetIds.remove(channel);
   }
 
   void evictGlobal() {
     _globalCache = null;
+  }
+
+  void setSevenTvEmoteSetId(String channel, String emoteSetId) {
+    _sevenTvEmoteSetIds[channel] = emoteSetId;
+  }
+
+  String? getChannelForSevenTvEmoteSet(String emoteSetId) {
+    for (final entry in _sevenTvEmoteSetIds.entries) {
+      if (entry.value == emoteSetId) return entry.key;
+    }
+    return null;
+  }
+
+  void updateSevenTvEmotes(
+    String channel, {
+    List<GenericEmote> added = const [],
+    List<String> removedIds = const [],
+    Map<String, ({String newName, String oldName})> renamed = const {},
+  }) {
+    final cache = _channelCaches[channel];
+    if (cache == null && added.isEmpty) return;
+
+    final byCode = Map<String, GenericEmote>.from(cache?.byCode ?? {});
+
+    for (final id in removedIds) {
+      byCode.removeWhere((_, e) => e.id == id && e.type == EmoteType.sevenTv);
+    }
+
+    for (final entry in renamed.entries) {
+      for (final e in byCode.values.toList()) {
+        if (e.id == entry.key && e.type == EmoteType.sevenTv) {
+          byCode.remove(e.code);
+          final renamedEmote = GenericEmote(
+            id: e.id,
+            code: entry.value.newName,
+            type: e.type,
+            url: e.url,
+            isAnimated: e.isAnimated,
+            scope: e.scope,
+            isZeroWidth: e.isZeroWidth,
+            relativeScale: e.relativeScale,
+            aspectRatio: e.aspectRatio,
+          );
+          byCode[entry.value.newName] = renamedEmote;
+          break;
+        }
+      }
+    }
+
+    for (final emote in added) {
+      final existing = byCode[emote.code];
+      if (existing == null ||
+          (existing.scope.index <= emote.scope.index &&
+              _providerPriority[emote.type]! < _providerPriority[existing.type]!)) {
+        byCode[emote.code] = emote;
+      }
+    }
+
+    final suggestions = byCode.values.toList()
+      ..sort((a, b) => a.code.compareTo(b.code));
+    _channelCaches[channel] = ChannelEmotes(
+      byCode: byCode,
+      suggestions: suggestions,
+    );
+    notifyListeners();
   }
 
   ChannelEmotes _buildChannelMap(List<GenericEmote> emotes) {

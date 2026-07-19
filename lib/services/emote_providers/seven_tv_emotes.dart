@@ -27,6 +27,14 @@ class SevenTvEmoteProvider {
     return _parseEmotes(items, channel: true);
   }
 
+  static GenericEmote? parseSingleEmote(
+    Map<String, dynamic> item, {
+    bool channel = false,
+  }) {
+    final emotes = _parseEmotes([item], channel: channel);
+    return emotes.isNotEmpty ? emotes.first : null;
+  }
+
   static List<GenericEmote> _parseEmotes(
     List<dynamic> items, {
     bool global = false,

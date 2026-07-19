@@ -75,7 +75,7 @@ class ChatMessageTile extends StatelessWidget {
       ),
     );
 
-    if (deleted && !isHistory) {
+    if (deleted) {
       child = Opacity(opacity: 0.35, child: child);
     }
 

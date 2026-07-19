@@ -55,8 +55,45 @@ void main() {
       expect(msg!.replyToText, '%ZZinvalid');
     });
 
-    test('returns null for non-PRIVMSG', () {
+    test('returns null for JOIN', () {
       const raw = '@display-name=forsen :tmi.twitch.tv JOIN #xqc';
+      final msg = RecentMessagesService.parseIrcLine(raw);
+      expect(msg, isNull);
+    });
+
+    test('parses timeout CLEARCHAT', () {
+      const raw =
+          '@ban-duration=300;target-user-id=974273622;rm-received-ts=1700000000000;historical=1 :tmi.twitch.tv CLEARCHAT #ermugo2 :ermugo1';
+      final msg = RecentMessagesService.parseIrcLine(raw);
+      expect(msg, isNotNull);
+      expect(msg!.isSystem, isTrue);
+      expect(msg.text, 'ermugo1 was timed out for 300s.');
+      expect(msg.isHistory, isTrue);
+      expect(msg.channel, isNull);
+      expect(msg.timestamp.millisecondsSinceEpoch, 1700000000000);
+    });
+
+    test('parses ban CLEARCHAT without ban-duration', () {
+      const raw =
+          '@target-user-id=974273622;rm-received-ts=1700000000000 :tmi.twitch.tv CLEARCHAT #ermugo2 :ermugo1';
+      final msg = RecentMessagesService.parseIrcLine(raw);
+      expect(msg, isNotNull);
+      expect(msg!.isSystem, isTrue);
+      expect(msg.text, 'ermugo1 was banned.');
+      expect(msg.isHistory, isTrue);
+    });
+
+    test('parses CLEARCHAT with channel parameter', () {
+      const raw =
+          '@ban-duration=1;rm-received-ts=1700000000000 :tmi.twitch.tv CLEARCHAT #ermugo2 :ermugo1';
+      final msg = RecentMessagesService.parseIrcLine(raw, channel: 'ermugo2');
+      expect(msg, isNotNull);
+      expect(msg!.channel, 'ermugo2');
+    });
+
+    test('CLEARCHAT without trailing returns null', () {
+      const raw =
+          '@ban-duration=300;rm-received-ts=1700000000000 :tmi.twitch.tv CLEARCHAT #ermugo2';
       final msg = RecentMessagesService.parseIrcLine(raw);
       expect(msg, isNull);
     });

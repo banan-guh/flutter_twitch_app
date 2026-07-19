@@ -31,6 +31,19 @@ class RecentMessagesService {
       if (parsed != null) messages.add(parsed);
     }
 
+    for (final msg in messages) {
+      if (msg.isSystem && msg.username.isNotEmpty) {
+        final targetUser = msg.username.toLowerCase();
+        for (final other in messages) {
+          if (!other.isSystem &&
+              other.username.toLowerCase() == targetUser &&
+              !msg.timestamp.isBefore(other.timestamp)) {
+            other.deleted = true;
+          }
+        }
+      }
+    }
+
     messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
     return messages;
   }
@@ -54,6 +67,9 @@ class RecentMessagesService {
     final cmdEnd = raw.indexOf(' ', idx);
     if (cmdEnd == -1) return null;
     final command = raw.substring(idx, cmdEnd);
+    if (command == 'CLEARCHAT') {
+      return _parseClearChat(raw, cmdEnd, tagsPart, channel);
+    }
     if (command != 'PRIVMSG') return null;
     idx = cmdEnd + 1;
 
@@ -182,6 +198,45 @@ class RecentMessagesService {
       emotePositions: emotePositions,
       badges: badges,
       sourceBroadcasterId: sourceBroadcasterId,
+    );
+  }
+
+  static TwitchMessage? _parseClearChat(
+    String raw,
+    int cmdEnd,
+    String? tagsPart,
+    String? channel,
+  ) {
+    int idx = cmdEnd + 1;
+    final channelEnd = raw.indexOf(' ', idx);
+    if (channelEnd == -1) return null;
+    idx = channelEnd + 1;
+    final targetUser = (idx < raw.length && raw[idx] == ':')
+        ? raw.substring(idx + 1)
+        : raw.substring(idx);
+    if (targetUser.isEmpty) return null;
+
+    final tags = _parseTags(tagsPart ?? '');
+    final banDuration = tags['ban-duration'];
+    final isTimeout = banDuration != null;
+    final durationSec = isTimeout ? int.tryParse(banDuration) : null;
+
+    final text = isTimeout
+        ? '$targetUser was timed out${durationSec != null ? ' for ${durationSec}s' : ''}.'
+        : '$targetUser was banned.';
+
+    final tsMs = tags['rm-received-ts'];
+    final ts = tsMs != null
+        ? DateTime.fromMillisecondsSinceEpoch(int.tryParse(tsMs) ?? 0)
+        : DateTime.now();
+
+    return TwitchMessage(
+      username: targetUser,
+      text: text,
+      isSystem: true,
+      channel: channel,
+      timestamp: ts,
+      isHistory: true,
     );
   }
 
