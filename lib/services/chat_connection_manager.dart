@@ -393,7 +393,7 @@ class ChatConnectionManager {
       final res = await http.get(uri);
       if (res.statusCode != 200) return;
       final data = jsonDecode(res.body) as Map<String, dynamic>;
-      final userId = data['id'] as String?;
+      final userId = (data['user'] as Map<String, dynamic>?)?['id'] as String?;
       final emoteSet =
           data['emote_set'] as Map<String, dynamic>?;
       final emoteSetId = emoteSet?['id'] as String?;
