@@ -248,7 +248,7 @@ class SevenTvEventClient {
 
         _emoteSetUpdateCtrl.add(
           SevenTvEmoteUpdateEvent(
-            emoteSetId: body['id'] as String? ?? '',
+            emoteSetId: d['id'] as String? ?? '',
             added: pushed,
             removed: pulled,
             renamed: updated,

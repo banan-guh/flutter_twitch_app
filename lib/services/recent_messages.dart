@@ -101,7 +101,9 @@ class RecentMessagesService {
     }
     if (tags.containsKey('reply-parent-msg-id')) {
       replyParentId = tags['reply-parent-msg-id'];
-      replyUser = tags['reply-parent-display-name'];
+      replyUser = tags['reply-parent-display-name'] != null
+          ? _unescapeIrcTag(_tryDecodeUri(tags['reply-parent-display-name']!))
+          : null;
       replyText = tags['reply-parent-msg-body'] != null
           ? (_unescapeIrcTag(_tryDecodeUri(tags['reply-parent-msg-body']!)))
           : null;

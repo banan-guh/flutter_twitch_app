@@ -1701,7 +1701,7 @@ void main() {
       expect(find.textContaining('msg 14'), findsOneWidget);
     });
 
-    testWidgets('keeps thread messages even when over limit', (
+    testWidgets('keeps entire thread when reply is within the limit', (
       WidgetTester tester,
     ) async {
       const channel = 'testchannel';
@@ -1709,7 +1709,7 @@ void main() {
         username: 'alice',
         text: 'thread root',
         messageId: 'p1',
-        timestamp: DateTime.now().subtract(const Duration(minutes: 10)),
+        timestamp: DateTime.now().subtract(const Duration(minutes: 12)),
         channel: channel,
       );
       final child = TwitchMessage(
@@ -1719,17 +1719,17 @@ void main() {
         replyToParentId: 'p1',
         replyToUser: 'alice',
         replyToText: 'thread root',
-        timestamp: DateTime.now().subtract(const Duration(minutes: 9)),
+        timestamp: DateTime.now().subtract(const Duration(minutes: 11)),
         isHistory: true,
         channel: channel,
       );
       final filler = List.generate(
-        12,
+        9,
         (i) => TwitchMessage(
           username: 'user$i',
           text: 'filler $i',
           messageId: 'f$i',
-          timestamp: DateTime.now().subtract(Duration(minutes: 8 - i)),
+          timestamp: DateTime.now().subtract(Duration(minutes: 10 - i)),
           channel: channel,
         ),
       );
@@ -1745,8 +1745,56 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      expect(find.textContaining('thread root'), findsAtLeast(1));
-      expect(find.textContaining('thread reply'), findsAtLeast(1));
+      expect(find.textContaining('thread root'), findsOneWidget);
+      expect(find.textContaining('thread reply'), findsOneWidget);
+    });
+
+    testWidgets('removes entire thread when all messages are past the limit', (
+      WidgetTester tester,
+    ) async {
+      const channel = 'testchannel';
+      final parent = TwitchMessage(
+        username: 'alice',
+        text: 'thread root',
+        messageId: 'p2',
+        timestamp: DateTime.now().subtract(const Duration(minutes: 14)),
+        channel: channel,
+      );
+      final child = TwitchMessage(
+        username: 'bob',
+        text: 'thread reply',
+        messageId: 'c2',
+        replyToParentId: 'p2',
+        replyToUser: 'alice',
+        replyToText: 'thread root',
+        timestamp: DateTime.now().subtract(const Duration(minutes: 13)),
+        isHistory: true,
+        channel: channel,
+      );
+      final filler = List.generate(
+        13,
+        (i) => TwitchMessage(
+          username: 'user$i',
+          text: 'filler $i',
+          messageId: 'g$i',
+          timestamp: DateTime.now().subtract(Duration(minutes: 12 - i)),
+          channel: channel,
+        ),
+      );
+      final eventSub = _TestEventSubService();
+      await joinChannel(
+        tester,
+        channelName: channel,
+        history: [parent, child, ...filler],
+        eventSub: eventSub,
+        maxMessages: 10,
+      );
+
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.textContaining('thread root'), findsNothing);
+      expect(find.textContaining('thread reply'), findsNothing);
     });
   });
 

@@ -275,28 +275,83 @@ class ChatConnectionManager {
     final msgs = channelMessages[channel];
     if (msgs == null || msgs.length <= maxMessages) return;
 
-    final threadParentIds = <String>{};
+    // Build reply graph: parentOf maps childId -> parentId,
+    // children maps parentId -> set of childIds.
+    final parentOf = <String, String>{};
+    final children = <String, Set<String>>{};
     for (final m in msgs) {
-      if (m.replyToParentId != null) {
-        threadParentIds.add(m.replyToParentId!);
+      if (m.replyToParentId != null && m.messageId != null) {
+        parentOf[m.messageId!] = m.replyToParentId!;
+        children.putIfAbsent(m.replyToParentId!, () => {});
+        children[m.replyToParentId!]!.add(m.messageId!);
       }
     }
 
-    final toRemove = <int>[];
-    int extra = msgs.length - maxMessages;
-    for (int i = msgs.length - 1; i >= 0 && extra > 0; i--) {
+    String findRoot(String id) {
+      var cur = id;
+      while (parentOf.containsKey(cur)) {
+        cur = parentOf[cur]!;
+      }
+      return cur;
+    }
+
+    // Phase 1: find active thread roots — roots that have at least one
+    // message in the visible window (first maxMessages non-system messages).
+    final activeRoots = <String>{};
+    int visibleCount = 0;
+    for (final m in msgs) {
+      if (m.isSystem) continue;
+      if (visibleCount >= maxMessages) break;
+      visibleCount++;
+      if (m.messageId == null) continue;
+      if (children.containsKey(m.messageId!)) {
+        activeRoots.add(m.messageId!);
+      }
+      if (parentOf.containsKey(m.messageId!)) {
+        activeRoots.add(findRoot(m.messageId!));
+      }
+    }
+
+    // Phase 2: BFS from active roots to collect all thread message IDs
+    // across the entire thread (root + all descendants).
+    final threadIds = <String>{};
+    if (activeRoots.isNotEmpty) {
+      final queue = <String>[...activeRoots];
+      while (queue.isNotEmpty) {
+        final id = queue.removeAt(0);
+        if (!threadIds.add(id)) continue;
+        final kids = children[id];
+        if (kids != null) {
+          for (final child in kids) {
+            if (!threadIds.contains(child)) queue.add(child);
+          }
+        }
+      }
+    }
+
+    // Phase 3: collect indices to keep. Keep all thread messages plus
+    // the first maxMessages non-thread non-system messages.
+    final keepIndices = <int>{};
+    int nonThreadKept = 0;
+    for (int i = 0; i < msgs.length; i++) {
       final m = msgs[i];
-      final inThread =
-          (m.messageId != null && threadParentIds.contains(m.messageId!)) ||
-          m.replyToParentId != null;
-      if (!inThread) {
-        toRemove.add(i);
-        extra--;
+      final isThread = m.messageId != null && threadIds.contains(m.messageId!);
+      if (isThread) {
+        keepIndices.add(i);
+      } else if (!m.isSystem) {
+        if (nonThreadKept < maxMessages) {
+          keepIndices.add(i);
+          nonThreadKept++;
+        }
       }
     }
 
-    for (final i in toRemove) {
-      msgs.removeAt(i);
+    // Phase 4: remove messages not in keepIndices.
+    // Remove from high to low index so indices stay stable.
+    for (int i = msgs.length - 1; i >= 0; i--) {
+      if (!keepIndices.contains(i)) {
+        msgs.removeAt(i);
+      }
     }
   }
 
@@ -810,18 +865,39 @@ class ChatConnectionManager {
     }
 
     final messageId = ircMsg.tags['id'];
-    final text = ircMsg.trailing!;
+    final rawText = ircMsg.trailing!;
 
     if (messageId != null && messageKeys.containsKey('$channel:$messageId')) {
       return;
+    }
+
+    // Extract reply metadata from IRC tags.
+    final ircReplyParentId = ircMsg.tags['reply-parent-msg-id'];
+    final ircReplyUser = ircMsg.tags['reply-parent-display-name'];
+    final ircReplyTextRaw = ircMsg.tags['reply-parent-msg-body'];
+    final ircReplyText = ircReplyTextRaw != null
+        ? _unescapeIrcTagValue(ircReplyTextRaw)
+        : null;
+
+    // Strip @user prefix that Twitch adds server-side for replies.
+    String displayText = rawText;
+    int textOffset = 0;
+    if (ircReplyUser != null && ircReplyUser.isNotEmpty) {
+      final prefix = '@$ircReplyUser ';
+      if (displayText.toLowerCase().startsWith(prefix.toLowerCase())) {
+        textOffset = prefix.length;
+        displayText = displayText.substring(textOffset);
+      }
     }
 
     String? pendingKey;
     TwitchMessage? pendingMsg;
     for (final entry in pendingLocals.entries) {
       if (entry.value.channel == channel &&
-          normalizeForReconciliation(entry.value.text) ==
-              normalizeForReconciliation(text)) {
+          (normalizeForReconciliation(entry.value.text) ==
+                  normalizeForReconciliation(displayText) ||
+              normalizeForReconciliation(entry.value.text) ==
+                  normalizeForReconciliation(rawText))) {
         pendingKey = entry.key;
         break;
       }
@@ -864,13 +940,16 @@ class ChatConnectionManager {
           final start = int.tryParse(posStr.substring(0, dashIdx));
           final end = int.tryParse(posStr.substring(dashIdx + 1));
           if (start == null || end == null) continue;
-          if (start < 0 || end >= text.length) continue;
-          final emoteCode = text.substring(start, end + 1);
+          if (start < 0 || end >= rawText.length) continue;
+          final aStart = start - textOffset;
+          final aEnd = end - textOffset;
+          if (aStart < 0 || aEnd >= displayText.length) continue;
+          final emoteCode = displayText.substring(aStart, aEnd + 1);
           emotePositions.add(
             EmotePosition(
               emoteId: emoteId,
-              startIndex: start,
-              endIndex: end + 1,
+              startIndex: aStart,
+              endIndex: aEnd + 1,
               emoteCode: emoteCode,
             ),
           );
@@ -881,15 +960,15 @@ class ChatConnectionManager {
 
     final msg = TwitchMessage(
       username: displayName,
-      text: text,
+      text: displayText,
       channel: channel,
       messageId: messageId,
       timestamp: timestamp,
       userId: userId,
       color: color,
-      replyToParentId: pendingMsg?.replyToParentId,
-      replyToUser: pendingMsg?.replyToUser,
-      replyToText: pendingMsg?.replyToText,
+      replyToParentId: pendingMsg?.replyToParentId ?? ircReplyParentId,
+      replyToUser: pendingMsg?.replyToUser ?? ircReplyUser,
+      replyToText: pendingMsg?.replyToText ?? ircReplyText,
       emotePositions: emotePositions,
     );
 
@@ -914,6 +993,15 @@ bool isMention(String text, String login) {
     if (lower == '@$login' || lower == login) return true;
   }
   return false;
+}
+
+String _unescapeIrcTagValue(String raw) {
+  return raw
+      .replaceAll('\\s', ' ')
+      .replaceAll('\\\\', '\\')
+      .replaceAll('\\:', ';')
+      .replaceAll('\\r', '\r')
+      .replaceAll('\\n', '\n');
 }
 
 class PendingLocal {
