@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -75,6 +76,14 @@ class SevenTvEventClient {
   StreamSubscription<dynamic>? _streamSub;
   Timer? _heartbeatTimer;
   int? _heartbeatInterval;
+  DateTime _lastHeartbeat = DateTime.now();
+  bool _handshakeComplete = false;
+  bool _reconnecting = false;
+  int _reconnectAttempt = 0;
+  bool _disposed = false;
+
+  final _pendingEmoteSets = <String>{};
+  final _pendingUsers = <String>{};
 
   final _emoteSetUpdateCtrl =
       StreamController<SevenTvEmoteUpdateEvent>.broadcast(sync: true);
@@ -91,6 +100,7 @@ class SevenTvEventClient {
   bool get isConnected => _channel != null;
 
   Future<void> connect() async {
+    if (_disposed) return;
     _disconnect();
     try {
       _channel = WebSocketChannel.connect(Uri.parse(_wsUrl));
@@ -100,57 +110,60 @@ class SevenTvEventClient {
         (raw) => _handleMessage(raw as String),
         onError: (e) {
           debugPrint('7TV event stream error: $e');
-          _statusCtrl.add(SevenTvEventStatus.disconnected);
+          _scheduleReconnect();
         },
         onDone: () {
           debugPrint('7TV event stream closed');
-          _statusCtrl.add(SevenTvEventStatus.disconnected);
+          _scheduleReconnect();
         },
       );
     } catch (e) {
       debugPrint('7TV event connect error: $e');
-      _disconnect();
+      _scheduleReconnect();
     }
   }
 
   void subscribeEmoteSet(String emoteSetId) {
-    _send(jsonEncode({
-      'op': 35,
-      'd': {
-        'type': 'emote_set.update',
-        'condition': {'object_id': emoteSetId},
-      },
-    }));
+    _pendingEmoteSets.add(emoteSetId);
+    if (_handshakeComplete) {
+      _sendSubscription('emote_set.update', emoteSetId, subscribe: true);
+    }
   }
 
   void unsubscribeEmoteSet(String emoteSetId) {
-    _send(jsonEncode({
-      'op': 36,
-      'd': {
-        'type': 'emote_set.update',
-        'condition': {'object_id': emoteSetId},
-      },
-    }));
+    _pendingEmoteSets.remove(emoteSetId);
+    _sendSubscription('emote_set.update', emoteSetId, subscribe: false);
   }
 
   void subscribeUser(String userId) {
+    _pendingUsers.add(userId);
+    if (_handshakeComplete) {
+      _sendSubscription('user.update', userId, subscribe: true);
+    }
+  }
+
+  void unsubscribeUser(String userId) {
+    _pendingUsers.remove(userId);
+    _sendSubscription('user.update', userId, subscribe: false);
+  }
+
+  void _sendSubscription(String type, String objectId, {required bool subscribe}) {
     _send(jsonEncode({
-      'op': 35,
+      'op': subscribe ? 35 : 36,
       'd': {
-        'type': 'user.update',
-        'condition': {'object_id': userId},
+        'type': type,
+        'condition': {'object_id': objectId},
       },
     }));
   }
 
-  void unsubscribeUser(String userId) {
-    _send(jsonEncode({
-      'op': 36,
-      'd': {
-        'type': 'user.update',
-        'condition': {'object_id': userId},
-      },
-    }));
+  void _flushPendingSubscriptions() {
+    for (final id in _pendingEmoteSets) {
+      _sendSubscription('emote_set.update', id, subscribe: true);
+    }
+    for (final id in _pendingUsers) {
+      _sendSubscription('user.update', id, subscribe: true);
+    }
   }
 
   void _handleMessage(String raw) {
@@ -161,19 +174,33 @@ class SevenTvEventClient {
 
       switch (op) {
         case 1:
-          final interval = d?['heartbeat_interval'] as int? ?? 30000;
-          _heartbeatInterval = interval;
-          _statusCtrl.add(SevenTvEventStatus.connected);
-          _startHeartbeat();
+          _onHello(d ?? {});
         case 0:
           _handleDispatch(d ?? {});
+        case 2:
+          _lastHeartbeat = DateTime.now();
         case 4:
           debugPrint('7TV server requested reconnect');
           connect();
+        case 5:
+          break;
+        case 7:
+          break;
       }
     } catch (e) {
       debugPrint('7TV event parse error: $e');
     }
+  }
+
+  void _onHello(Map<String, dynamic> d) {
+    final interval = d['heartbeat_interval'] as int? ?? 30000;
+    _heartbeatInterval = interval;
+    _handshakeComplete = true;
+    _reconnectAttempt = 0;
+    _lastHeartbeat = DateTime.now();
+    _statusCtrl.add(SevenTvEventStatus.connected);
+    _startHeartbeat();
+    _flushPendingSubscriptions();
   }
 
   void _handleDispatch(Map<String, dynamic> d) {
@@ -261,7 +288,17 @@ class SevenTvEventClient {
     if (_heartbeatInterval == null) return;
     _heartbeatTimer = Timer.periodic(
       Duration(milliseconds: _heartbeatInterval!),
-      (_) => _send(jsonEncode({'op': 3})),
+      (_) {
+        if (_channel == null) return;
+        final elapsed = DateTime.now().difference(_lastHeartbeat);
+        if (elapsed.inMilliseconds > 3 * _heartbeatInterval!) {
+          debugPrint('7TV heartbeat timeout — reconnecting');
+          _disconnect();
+          _scheduleReconnect();
+          return;
+        }
+        _send(jsonEncode({'op': 3}));
+      },
     );
   }
 
@@ -269,17 +306,54 @@ class SevenTvEventClient {
     _channel?.sink.add(message);
   }
 
+  void _scheduleReconnect() {
+    if (_reconnecting || _disposed) return;
+    _reconnecting = true;
+    _handshakeComplete = false;
+    _statusCtrl.add(SevenTvEventStatus.disconnected);
+    _reconnectAttempt++;
+    Duration delay;
+    if (_reconnectAttempt == 1) {
+      delay = Duration.zero;
+    } else {
+      final base = Duration(
+        seconds: min(pow(2, _reconnectAttempt - 2).toInt(), 30),
+      );
+      final jitter = 0.75 + Random().nextDouble() * 0.5;
+      delay = Duration(milliseconds: (base.inMilliseconds * jitter).toInt());
+    }
+    debugPrint('7TV scheduling reconnect in ${delay.inMilliseconds}ms (attempt $_reconnectAttempt)');
+    Timer(delay, () {
+      _reconnecting = false;
+      if (!_disposed) {
+        connect();
+      }
+    });
+  }
+
   void _disconnect() {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
     _heartbeatInterval = null;
+    _handshakeComplete = false;
     _streamSub?.cancel();
     _streamSub = null;
     _channel?.sink.close();
     _channel = null;
   }
 
+  @visibleForTesting
+  void handleRawMessage(Map<String, dynamic> msg) => _handleMessage(jsonEncode(msg));
+
+  @visibleForTesting
+  void emitDisconnected() {
+    _handshakeComplete = false;
+    _statusCtrl.add(SevenTvEventStatus.disconnected);
+  }
+
   void dispose() {
+    _disposed = true;
+    _reconnecting = false;
     _disconnect();
     _emoteSetUpdateCtrl.close();
     _userUpdateCtrl.close();
