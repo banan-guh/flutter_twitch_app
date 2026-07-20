@@ -867,6 +867,13 @@ class ChatConnectionManager {
     final messageId = ircMsg.tags['id'];
     final text = ircMsg.trailing!;
 
+    // Twitch's IRC gateway prepends @username to reply echoes.
+    // Strip it so pendingLocals matching works against the clean user-typed text.
+    final replyPrefixMatch = RegExp(r'^\s*@\S+\s+').firstMatch(text);
+    final prefixLen = replyPrefixMatch?.end ?? 0;
+    final strippedText = prefixLen > 0 ? text.substring(prefixLen) : text;
+    final ircReplyParentId = ircMsg.tags['reply-parent-msg-id'];
+
     if (messageId != null && messageKeys.containsKey('$channel:$messageId')) {
       return;
     }
@@ -876,7 +883,7 @@ class ChatConnectionManager {
     for (final entry in pendingLocals.entries) {
       if (entry.value.channel == channel &&
           normalizeForReconciliation(entry.value.text) ==
-              normalizeForReconciliation(text)) {
+              normalizeForReconciliation(strippedText)) {
         pendingKey = entry.key;
         break;
       }
@@ -921,11 +928,14 @@ class ChatConnectionManager {
           if (start == null || end == null) continue;
           if (start < 0 || end >= text.length) continue;
           final emoteCode = text.substring(start, end + 1);
+          final adjStart = start - prefixLen;
+          final adjEnd = (end + 1) - prefixLen;
+          if (adjStart < 0 || adjEnd > strippedText.length) continue;
           emotePositions.add(
             EmotePosition(
               emoteId: emoteId,
-              startIndex: start,
-              endIndex: end + 1,
+              startIndex: adjStart,
+              endIndex: adjEnd,
               emoteCode: emoteCode,
             ),
           );
@@ -936,13 +946,13 @@ class ChatConnectionManager {
 
     final msg = TwitchMessage(
       username: displayName,
-      text: text,
+      text: strippedText,
       channel: channel,
       messageId: messageId,
       timestamp: timestamp,
       userId: userId,
       color: color,
-      replyToParentId: pendingMsg?.replyToParentId,
+      replyToParentId: pendingMsg?.replyToParentId ?? ircReplyParentId,
       replyToUser: pendingMsg?.replyToUser,
       replyToText: pendingMsg?.replyToText,
       emotePositions: emotePositions,
