@@ -865,39 +865,18 @@ class ChatConnectionManager {
     }
 
     final messageId = ircMsg.tags['id'];
-    final rawText = ircMsg.trailing!;
+    final text = ircMsg.trailing!;
 
     if (messageId != null && messageKeys.containsKey('$channel:$messageId')) {
       return;
-    }
-
-    // Extract reply metadata from IRC tags.
-    final ircReplyParentId = ircMsg.tags['reply-parent-msg-id'];
-    final ircReplyUser = ircMsg.tags['reply-parent-display-name'];
-    final ircReplyTextRaw = ircMsg.tags['reply-parent-msg-body'];
-    final ircReplyText = ircReplyTextRaw != null
-        ? _unescapeIrcTagValue(ircReplyTextRaw)
-        : null;
-
-    // Strip @user prefix that Twitch adds server-side for replies.
-    String displayText = rawText;
-    int textOffset = 0;
-    if (ircReplyUser != null && ircReplyUser.isNotEmpty) {
-      final prefix = '@$ircReplyUser ';
-      if (displayText.toLowerCase().startsWith(prefix.toLowerCase())) {
-        textOffset = prefix.length;
-        displayText = displayText.substring(textOffset);
-      }
     }
 
     String? pendingKey;
     TwitchMessage? pendingMsg;
     for (final entry in pendingLocals.entries) {
       if (entry.value.channel == channel &&
-          (normalizeForReconciliation(entry.value.text) ==
-                  normalizeForReconciliation(displayText) ||
-              normalizeForReconciliation(entry.value.text) ==
-                  normalizeForReconciliation(rawText))) {
+          normalizeForReconciliation(entry.value.text) ==
+              normalizeForReconciliation(text)) {
         pendingKey = entry.key;
         break;
       }
@@ -940,16 +919,13 @@ class ChatConnectionManager {
           final start = int.tryParse(posStr.substring(0, dashIdx));
           final end = int.tryParse(posStr.substring(dashIdx + 1));
           if (start == null || end == null) continue;
-          if (start < 0 || end >= rawText.length) continue;
-          final aStart = start - textOffset;
-          final aEnd = end - textOffset;
-          if (aStart < 0 || aEnd >= displayText.length) continue;
-          final emoteCode = displayText.substring(aStart, aEnd + 1);
+          if (start < 0 || end >= text.length) continue;
+          final emoteCode = text.substring(start, end + 1);
           emotePositions.add(
             EmotePosition(
               emoteId: emoteId,
-              startIndex: aStart,
-              endIndex: aEnd + 1,
+              startIndex: start,
+              endIndex: end + 1,
               emoteCode: emoteCode,
             ),
           );
@@ -960,15 +936,15 @@ class ChatConnectionManager {
 
     final msg = TwitchMessage(
       username: displayName,
-      text: displayText,
+      text: text,
       channel: channel,
       messageId: messageId,
       timestamp: timestamp,
       userId: userId,
       color: color,
-      replyToParentId: pendingMsg?.replyToParentId ?? ircReplyParentId,
-      replyToUser: pendingMsg?.replyToUser ?? ircReplyUser,
-      replyToText: pendingMsg?.replyToText ?? ircReplyText,
+      replyToParentId: pendingMsg?.replyToParentId,
+      replyToUser: pendingMsg?.replyToUser,
+      replyToText: pendingMsg?.replyToText,
       emotePositions: emotePositions,
     );
 
@@ -993,15 +969,6 @@ bool isMention(String text, String login) {
     if (lower == '@$login' || lower == login) return true;
   }
   return false;
-}
-
-String _unescapeIrcTagValue(String raw) {
-  return raw
-      .replaceAll('\\s', ' ')
-      .replaceAll('\\\\', '\\')
-      .replaceAll('\\:', ';')
-      .replaceAll('\\r', '\r')
-      .replaceAll('\\n', '\n');
 }
 
 class PendingLocal {
