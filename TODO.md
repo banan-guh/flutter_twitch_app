@@ -19,31 +19,34 @@
 
 ## Medium Priority
 
-- [ ] **Rearrange-ability of 
+- [ ] **Rearrange-ability of channels** - should be able to rearrange where channels are in the top bar
 - [ ] **Documentation** - Add comprehensive comments throughout the codebase explaining architecture, data flow, key design decisions, and non-obvious logic (e.g. EventSub vs IRC split, underline animation system, thread panel architecture).
 - [x] **/me handling** - `/me` messages detected from `\x01ACTION ... \x01` wrapping in both EventSub and IRC. Rendered as `username message` (no colon, message colored like username) in all 3 views.
 - [x] **Unread indicator** - Channel tab name is white when there are unread messages, grey when all are read.
 - [ ] **Localized display names** - Research how Twitch handles localized/non-ASCII display names and ensure the app handles them correctly.
 
 ## Bugs
-- [ ] **Threads decay needs to be fixed**
-- [ ] **Ping happening with system messages** - Ping (unread) should not activate on a system message, currently does.
-- [ ] **Live color change broken** - color not updating live after /color. Need to test with other people as well.
-- [ ] **Timeout not showing** - both as system message and 35% opacity message.
-- [ ] **Emotes aren't rendered as text** - when emotes aren't loaded yet, the correct behaviour should show the emote as text first (0-width not shown as text unless they aren't overlapping anything), then replace the text with the emote when loaded. Not high-priority but would be nice to fix.
+- [ ] **Changing channels should be more smooth** - more leniency in swiping
+- [ ] **Changing channels is interrupted by new messages** - changing channels is not smooth
+- [+] **Threads decay needs to be fixed**
+- [x] **Ping happening with system messages** - Ping (unread) should not activate on a system message, currently does.
+- [x] **Live color change broken** - color not updating live after /color. Need to test with other people as well.
+- [x] **Timeout not showing** - both as system message and 35% opacity message.
+- [ ] **Pseudo-timeout not showing** - need to read IRC to see what's happening, IDK what
+- [-] **Emotes aren't rendered as text** - when emotes aren't loaded yet, the correct behaviour should show the emote as text first (0-width not shown as text unless they aren't overlapping anything), then replace the text with the emote when loaded. Not high-priority but would be nice to fix. (SKIPPED)
 - [x] **IRC fallback creates unreachable pending** - When `_channelUserIds[channel]` is null (e.g. `_subscribeChannel` failed silently), `_doSendMessage` falls through to IRC with a pending entry that has no `_pendingByMessageId` mapping. EventSub can never match it, so the message stays "unconfirmed" permanently. Fix: queue until `broadcasterId` resolves, or skip pending creation when Helix path isn't available. See `home_screen.dart:913`.
 - [x] **White highlight of notifications** - If notifications appear (e.g. system messages, whispers, mentions), they light up with white highlight. Not sure what causes this; need to investigate.
 - [x] **Fix Twitch emote rendering** - Emotes display incorrectly. Investigate emote parsing, URL generation, or image sizing to get them rendering properly.
-- [ ] **Fix 7TV system messages** - 7TV emotes/system messages not rendering correctly. Investigate and fix.
+- [x] **Fix 7TV system messages** - 7TV emotes/system messages not rendering correctly. Investigate and fix.
 - [x] **Twitch emotes don't show in emote menu** - `resolveEmotes` was placed after the `getCurrentUser` gate in `_subscribeChannel`, so if that API call failed the emote fetch was silently skipped. Moved emote resolution before the gate so it always runs when `channelUserId` is available.
 
 ## Research / Open Ends
 
-- [ ] **Rate limit enforcement** - Enforce the 20-msg / 30-sec limit before Twitch does, with a toggle to disable. Research Twitch's exact rate limit behavior to decide on implementation.
+- [-] **Rate limit enforcement** - Enforce the 20-msg / 30-sec limit before Twitch does, with a toggle to disable. Research Twitch's exact rate limit behavior to decide on implementation.
 
 ## Low Priority / Future
 
-- [ ] **OS notifications + background** - Push notifications when mentioned/whispered while app is backgrounded; run keepalive in background.
+- [x] **OS notifications + background** - Push notifications when mentioned/whispered while app is backgrounded; run keepalive in background.
 - [ ] **Different mode** - Toggleable type box visibility and fullscreen.
 - [ ] **Robotty history bot backup** - Add fallback/backup for recent-messages.robotty.de service.
 - [ ] **Injectable TwitchBadgeService** - Currently standalone; consider making it injectable (like EventSubService/IrcService) for testability. Low priority.
