@@ -16,6 +16,8 @@
 - [x] **Thread view input** - Typing box inside the thread view; sending a message auto-replies to the most recent message in the thread.
 - [x] **Clickable links** - Detect URLs in chat messages and make them tappable to open in an external browser.
 - [x] **Message cutoff** - When a channel exceeds N messages, truncate to N. Keep threads alive until the thread itself passes the threshold. System-level change.
+- [ ] **Check for wasteful rebuilds** - MUCH-NEEDED optimization.
+- [ ] **Check for wasteful / unreadable code** - for other people who want to read the codebase.
 
 ## Medium Priority
 
