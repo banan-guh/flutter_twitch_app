@@ -5,6 +5,7 @@ import '../services/twitch_auth.dart';
 class UserProfileSheet extends StatefulWidget {
   final String username;
   final String? userId;
+  final String displayName;
   final TwitchAuth twitchAuth;
   final TextEditingController messageController;
   final FocusNode focusNode;
@@ -14,6 +15,7 @@ class UserProfileSheet extends StatefulWidget {
     super.key,
     required this.username,
     this.userId,
+    required this.displayName,
     required this.twitchAuth,
     required this.messageController,
     required this.focusNode,
@@ -28,6 +30,12 @@ class UserProfileSheetState extends State<UserProfileSheet> {
   Map<String, dynamic>? _profile;
   bool _loading = true;
   String? _error;
+
+  String get _formattedDisplayName {
+    final display = _profile?['display_name'] as String? ?? widget.displayName;
+    if (display.toLowerCase() == widget.username.toLowerCase()) return display;
+    return '${widget.username}($display)';
+  }
 
   @override
   void initState() {
@@ -131,7 +139,7 @@ class UserProfileSheetState extends State<UserProfileSheet> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        _profile!['display_name'] as String? ?? widget.username,
+                        _formattedDisplayName,
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.w600,
@@ -201,7 +209,7 @@ class UserProfileSheetState extends State<UserProfileSheet> {
                   builder: (ctx) => AlertDialog(
                     title: const Text('Block user'),
                     content: Text(
-                      'Block ${widget.username}? They will not be able to whisper you or host your channel.',
+                      'Block ${widget.displayName}? They will not be able to whisper you or host your channel.',
                     ),
                     actions: [
                       TextButton(
@@ -222,7 +230,7 @@ class UserProfileSheetState extends State<UserProfileSheet> {
                   SnackBar(
                     content: Text(
                       ok
-                          ? '${widget.username} blocked'
+                          ? '${widget.displayName} blocked'
                           : 'Block failed: ${TwitchApi.lastError ?? "unknown"}',
                     ),
                   ),
@@ -252,7 +260,7 @@ class UserProfileSheetState extends State<UserProfileSheet> {
                     content: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text('Report ${widget.username} for:'),
+                        Text('Report ${widget.displayName} for:'),
                         const SizedBox(height: 12),
                         TextField(
                           controller: reasonController,

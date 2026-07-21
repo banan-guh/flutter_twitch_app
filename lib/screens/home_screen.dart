@@ -1023,12 +1023,13 @@ class _HomeScreenState extends State<HomeScreen>
     return threadMsgs;
   }
 
-  void _showUserProfile(String username, String? userId) {
+  void _showUserProfile(String username, String? userId, {String? displayName}) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       builder: (ctx) => UserProfileSheet(
         username: username,
+        displayName: displayName ?? username,
         userId: userId,
         twitchAuth: widget.twitchAuth,
         messageController: _messageController,
@@ -1689,7 +1690,7 @@ class _HomeScreenState extends State<HomeScreen>
                           decoration: TextDecoration.none,
                         ),
                         recognizer: TapGestureRecognizer()
-                          ..onTap = () => _showUserProfile(msg.login, msg.userId),
+                          ..onTap = () => _showUserProfile(msg.login, msg.userId, displayName: msg.displayName),
                       ),
                       if (msg.isAction)
                         ..._buildMessageSpans(

@@ -11,7 +11,7 @@ class _SwipePhysics extends PageScrollPhysics {
 
 // stock fling distances for horizontal swipe are too high, just increased sensitivity here
   @override
-  double get minFlingDistance => 1.0;
+  double get minFlingDistance => 10.0;
 
   @override
   double get minFlingVelocity => 20.0;
