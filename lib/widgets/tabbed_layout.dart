@@ -1,41 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
-import 'package:flutter/physics.dart';
-
-class _SwipePhysics extends PageScrollPhysics {
-  final double flingThreshold;
-
-  const _SwipePhysics({super.parent, this.flingThreshold = 1.0});
-
-  @override
-  _SwipePhysics applyTo(ScrollPhysics? ancestor) {
-    return _SwipePhysics(
-      parent: buildParent(ancestor),
-      flingThreshold: flingThreshold,
-    );
-  }
-
-  @override
-  Simulation? createBallisticSimulation(
-    ScrollMetrics position,
-    double velocity,
-  ) {
-    if (velocity.abs() >= flingThreshold) {
-      final viewport = position.viewportDimension;
-      final currentPage = (position.pixels / viewport).round();
-      final targetPage = velocity > 0 ? currentPage + 1 : currentPage - 1;
-      final target = (targetPage * viewport)
-          .clamp(position.minScrollExtent, position.maxScrollExtent);
-      return SpringSimulation(
-        const SpringDescription(mass: 0.5, stiffness: 100.0, damping: 1.0),
-        position.pixels,
-        target,
-        velocity,
-      );
-    }
-    return super.createBallisticSimulation(position, velocity);
-  }
-}
 
 class TabbedLayout extends StatefulWidget {
   final List<String> tabs;
@@ -175,7 +139,6 @@ class TabbedLayoutState extends State<TabbedLayout>
             ),
             child: TabBarView(
               controller: _tabController,
-              physics: const _SwipePhysics(),
               children: List.generate(
                 tabs.length,
                 (i) => widget.pageBuilder(context, i),
