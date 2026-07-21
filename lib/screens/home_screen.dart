@@ -289,6 +289,7 @@ class _HomeScreenState extends State<HomeScreen>
                   }
                 }
                 _truncateChannelMessages(name);
+                _chatVersion.value++;
               }
             });
             _maybeAddConnected(name);
@@ -671,6 +672,7 @@ class _HomeScreenState extends State<HomeScreen>
                 }
               }
               _truncateChannelMessages(name);
+              _chatVersion.value++;
             }
           });
           _maybeAddConnected(name);

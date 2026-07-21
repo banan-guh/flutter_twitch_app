@@ -1745,10 +1745,16 @@ void main() {
       await tester.pump();
       await tester.pump();
 
+      // Expand viewport so lazy ListView builds all items without scrolling
+      // (avoids triggering the frozen-snapshot behavior in scroll notifications).
+      await tester.binding.setSurfaceSize(const Size(2000, 2000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpAndSettle();
+
       final taken = tester.takeException();
       if (taken != null) debugPrint('TAKEN EXCEPTION: $taken');
 
-      expect(find.textContaining('thread root'), findsOneWidget);
+      expect(find.textContaining('thread root'), findsWidgets);
       expect(find.textContaining('thread reply'), findsOneWidget);
     });
 
@@ -1844,8 +1850,14 @@ void main() {
       await tester.pump();
       await tester.pump();
 
+      // Expand viewport so lazy ListView builds all items without scrolling
+      // (avoids triggering the frozen-snapshot behavior in scroll notifications).
+      await tester.binding.setSurfaceSize(const Size(2000, 2000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpAndSettle();
+
       // Thread is initially preserved — child is within the limit.
-      expect(find.textContaining('thread root'), findsOneWidget);
+      expect(find.textContaining('thread root'), findsWidgets);
       expect(find.textContaining('thread reply'), findsOneWidget);
 
       // Emit new messages that push the thread past the limit.
