@@ -44,7 +44,7 @@ class ChatMessageTile extends StatelessWidget {
     );
 
     Widget child = Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       child: Row(
         children: [
           Expanded(
@@ -54,18 +54,15 @@ class ChatMessageTile extends StatelessWidget {
                   WidgetSpan(
                     alignment: PlaceholderAlignment.middle,
                     child: SizedBox(
-                      width: timestampFontSize * 3.5,
-                      child: Padding(
-                        padding: const EdgeInsets.only(right: 4),
-                        child: Text(
-                          timestamp,
-                          textAlign: TextAlign.right,
-                          style: tsStyle,
-                        ),
+                      width: timestampFontSize * 3,
+                      child: Text(
+                        timestamp,
+                        textAlign: TextAlign.left,
+                        style: tsStyle,
                       ),
                     ),
                   ),
-                  ...children,
+                ...children,
                 ],
                 style: bodyStyle,
               ),
