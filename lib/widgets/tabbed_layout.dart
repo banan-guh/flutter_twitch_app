@@ -9,11 +9,36 @@ class _SwipePhysics extends PageScrollPhysics {
     return _SwipePhysics(parent: buildParent(ancestor));
   }
 
+// stock fling distances for horizontal swipe are too high, just increased sensitivity here
   @override
   double get minFlingDistance => 1.0;
 
   @override
-  double get minFlingVelocity => 100.0;
+  double get minFlingVelocity => 20.0;
+}
+
+class _SwipeScrollBehavior extends ScrollBehavior {
+  const _SwipeScrollBehavior();
+
+  @override
+  Widget buildScrollbar(
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) => child;
+
+  @override
+  Widget buildOverscrollIndicator(
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) => child;
+
+  @override
+  GestureVelocityTrackerBuilder velocityTrackerBuilder(BuildContext context) {
+    return (PointerEvent event) =>
+        IOSScrollViewFlingVelocityTracker(event.kind);
+  }
 }
 
 class TabbedLayout extends StatefulWidget {
@@ -23,6 +48,8 @@ class TabbedLayout extends StatefulWidget {
   final IndexedWidgetBuilder pageBuilder;
   final IndexedWidgetBuilder? tabBuilder;
   final AlignmentGeometry tabAlignment;
+
+  static const double minEdgeExclusion = 20.0;
 
   const TabbedLayout({
     super.key,
@@ -109,6 +136,10 @@ class TabbedLayoutState extends State<TabbedLayout>
 
     final theme = Theme.of(context);
 
+    final edgeInset = MediaQuery.of(context).systemGestureInsets;
+    final leftExclude = edgeInset.left > 0 ? edgeInset.left : TabbedLayout.minEdgeExclusion;
+    final rightExclude = edgeInset.right > 0 ? edgeInset.right : TabbedLayout.minEdgeExclusion;
+
     return Column(
       children: [
         Container(
@@ -143,26 +174,59 @@ class TabbedLayoutState extends State<TabbedLayout>
           ),
         ),
         Expanded(
-          child: ScrollConfiguration(
-            behavior: ScrollConfiguration.of(context).copyWith(
-              dragDevices: {
-                PointerDeviceKind.touch,
-                PointerDeviceKind.mouse,
-                PointerDeviceKind.stylus,
-                PointerDeviceKind.unknown,
-              },
-            ),
-            child: TabBarView(
-              controller: _tabController,
-              physics: const _SwipePhysics(),
-              children: List.generate(
-                tabs.length,
-                (i) => widget.pageBuilder(context, i),
+          child: Stack(
+            children: [
+              ScrollConfiguration(
+                behavior: _SwipeScrollBehavior().copyWith(
+                  dragDevices: {
+                    PointerDeviceKind.touch,
+                    PointerDeviceKind.mouse,
+                    PointerDeviceKind.stylus,
+                    PointerDeviceKind.unknown,
+                  },
+                ),
+                child: TabBarView(
+                  controller: _tabController,
+                  physics: const _SwipePhysics(),
+                  children: List.generate(
+                    tabs.length,
+                    (i) => widget.pageBuilder(context, i),
+                  ),
+                ),
               ),
-            ),
+              Positioned(
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: leftExclude,
+                child: const _EdgeExclusionZone(),
+              ),
+              Positioned(
+                right: 0,
+                top: 0,
+                bottom: 0,
+                width: rightExclude,
+                child: const _EdgeExclusionZone(),
+              ),
+            ],
           ),
         ),
       ],
+    );
+  }
+}
+
+class _EdgeExclusionZone extends StatelessWidget {
+  const _EdgeExclusionZone();
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      behavior: HitTestBehavior.opaque,
+      onPointerDown: (_) {},
+      onPointerMove: (_) {},
+      onPointerUp: (_) {},
+      onPointerCancel: (_) {},
     );
   }
 }

@@ -329,17 +329,24 @@ class ChatConnectionManager {
       }
     }
 
-    // Phase 3: collect indices to keep. Keep all thread messages plus
-    // the first maxMessages non-thread non-system messages.
+    // Phase 3: collect indices to keep. Keep all active thread messages plus
+    // the first maxMessages non-thread non-system messages. Orphan thread
+    // messages (thread-adjacent but not in an active thread) are removed.
     final keepIndices = <int>{};
     int nonThreadKept = 0;
     for (int i = 0; i < msgs.length; i++) {
       final m = msgs[i];
-      final isThread = m.messageId != null && threadIds.contains(m.messageId!);
-      if (isThread) {
+      final isActiveThread =
+          m.messageId != null && threadIds.contains(m.messageId!);
+      if (isActiveThread) {
         keepIndices.add(i);
-      } else if (!m.isSystem) {
-        if (nonThreadKept < maxMessages) {
+      } else if (m.isSystem) {
+        // system messages past the limit are removed
+      } else {
+        final isOrphanThread = m.messageId != null && !isActiveThread && (
+            parentOf.containsKey(m.messageId!) ||
+            children.containsKey(m.messageId!));
+        if (!isOrphanThread && nonThreadKept < maxMessages) {
           keepIndices.add(i);
           nonThreadKept++;
         }

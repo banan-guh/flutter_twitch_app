@@ -1796,6 +1796,74 @@ void main() {
       expect(find.textContaining('thread root'), findsNothing);
       expect(find.textContaining('thread reply'), findsNothing);
     });
+
+    testWidgets('removes thread when new messages push last child past the limit', (
+      WidgetTester tester,
+    ) async {
+      const channel = 'testchannel';
+      final parent = TwitchMessage(
+        username: 'alice',
+        text: 'thread root',
+        messageId: 'p3',
+        timestamp: DateTime.now().subtract(const Duration(minutes: 12)),
+        channel: channel,
+      );
+      final child = TwitchMessage(
+        username: 'bob',
+        text: 'thread reply',
+        messageId: 'c3',
+        replyToParentId: 'p3',
+        replyToUser: 'alice',
+        replyToText: 'thread root',
+        timestamp: DateTime.now().subtract(const Duration(minutes: 11)),
+        isHistory: true,
+        channel: channel,
+      );
+      final filler = List.generate(
+        9,
+        (i) => TwitchMessage(
+          username: 'user$i',
+          text: 'filler $i',
+          messageId: 'h$i',
+          timestamp: DateTime.now().subtract(Duration(minutes: 10 - i)),
+          channel: channel,
+        ),
+      );
+      final eventSub = _TestEventSubService();
+      await joinChannel(
+        tester,
+        channelName: channel,
+        history: [parent, child, ...filler],
+        eventSub: eventSub,
+        maxMessages: 10,
+      );
+
+      await tester.pump();
+      await tester.pump();
+
+      // Thread is initially preserved — child is within the limit.
+      expect(find.textContaining('thread root'), findsOneWidget);
+      expect(find.textContaining('thread reply'), findsOneWidget);
+
+      // Emit new messages that push the thread past the limit.
+      for (int i = 1; i <= 3; i++) {
+        eventSub.emitMessage(
+          TwitchMessage(
+            username: 'newuser',
+            text: 'new message $i',
+            messageId: 'new$i',
+            timestamp: DateTime.now(),
+            channel: channel,
+          ),
+        );
+        await tester.pump();
+      }
+      await tester.pump();
+
+      // Thread should now be removed — pushed past maxMessages=10.
+      expect(find.textContaining('thread root'), findsNothing);
+      expect(find.textContaining('thread reply'), findsNothing);
+    });
   });
 
   group('Chat pause', () {
