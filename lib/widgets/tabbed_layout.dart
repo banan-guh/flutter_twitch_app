@@ -1,6 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 
+class _SwipePhysics extends PageScrollPhysics {
+  const _SwipePhysics({super.parent});
+
+  @override
+  _SwipePhysics applyTo(ScrollPhysics? ancestor) {
+    return _SwipePhysics(parent: buildParent(ancestor));
+  }
+
+  @override
+  double get minFlingDistance => 1.0;
+
+  @override
+  double get minFlingVelocity => 100.0;
+}
+
 class TabbedLayout extends StatefulWidget {
   final List<String> tabs;
   final int selectedIndex;
@@ -139,6 +154,7 @@ class TabbedLayoutState extends State<TabbedLayout>
             ),
             child: TabBarView(
               controller: _tabController,
+              physics: const _SwipePhysics(),
               children: List.generate(
                 tabs.length,
                 (i) => widget.pageBuilder(context, i),
