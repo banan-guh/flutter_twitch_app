@@ -12,7 +12,7 @@ import 'package:flutter_twitch_app/services/user_store.dart';
 
 TwitchMessage _msg(String id, String text, {String? replyToParentId}) =>
     TwitchMessage(
-      username: 'user',
+      login: 'user',
       text: text,
       messageId: id,
       channel: 'test',

@@ -5,8 +5,8 @@ void main() {
   group('TwitchMessage', () {
     test('creates with default timestamp', () {
       final now = DateTime.now();
-      final msg = TwitchMessage(username: 'testuser', text: 'hello');
-      expect(msg.username, 'testuser');
+      final msg = TwitchMessage(login: 'testuser', text: 'hello');
+      expect(msg.login, 'testuser');
       expect(msg.text, 'hello');
       expect(msg.timestamp.difference(now).inSeconds, lessThan(2));
       expect(msg.isSystem, false);
@@ -24,7 +24,7 @@ void main() {
     test('creates with all fields', () {
       final ts = DateTime(2025, 1, 1, 12, 30);
       final msg = TwitchMessage(
-        username: 'forsen',
+        login: 'forsen',
         text: 'Hello chat',
         color: '#FF0000',
         timestamp: ts,
@@ -38,7 +38,7 @@ void main() {
         replyToText: 'previous message',
         isHighlighted: true,
       );
-      expect(msg.username, 'forsen');
+      expect(msg.login, 'forsen');
       expect(msg.text, 'Hello chat');
       expect(msg.color, '#FF0000');
       expect(msg.timestamp, ts);
@@ -54,13 +54,13 @@ void main() {
 
     test('creates system message', () {
       final msg = TwitchMessage(
-        username: '',
+        login: '',
         text: 'Connected',
         isSystem: true,
         channel: 'xqc',
       );
       expect(msg.isSystem, true);
-      expect(msg.username, '');
+      expect(msg.login, '');
       expect(msg.text, 'Connected');
     });
   });

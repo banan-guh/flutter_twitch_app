@@ -142,7 +142,7 @@ class ThreadPanelWidgetState extends State<ThreadPanelWidget> {
                                   badgeScale: s,
                                 ),
                                 TextSpan(
-                                  text: '${msg.username} ',
+                                  text: '${msg.formattedUsername} ',
                                   style: TextStyle(
                                     fontSize: 14 * s,
                                     fontWeight: FontWeight.w600,
@@ -166,7 +166,7 @@ class ThreadPanelWidgetState extends State<ThreadPanelWidget> {
                                   badgeScale: s,
                                 ),
                                 TextSpan(
-                                  text: '${msg.username}: ',
+                                  text: '${msg.formattedUsername}: ',
                                   style: TextStyle(
                                     fontSize: 14 * s,
                                     fontWeight: FontWeight.w600,
@@ -186,8 +186,8 @@ class ThreadPanelWidgetState extends State<ThreadPanelWidget> {
                             ],
                             onLongPress: () => widget.onLongPress(msg),
                             semanticsLabel: msg.isHighlighted
-                                ? 'Mention: $ts ${msg.username}: ${msg.text}'
-                                : '$ts ${msg.username}: ${msg.text}',
+                                ? 'Mention: $ts ${msg.formattedUsername}: ${msg.text}'
+                                : '$ts ${msg.formattedUsername}: ${msg.text}',
                           );
                         },
                       ),

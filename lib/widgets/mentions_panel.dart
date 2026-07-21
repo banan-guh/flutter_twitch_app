@@ -134,7 +134,7 @@ class MentionsPanelWidgetState extends State<MentionsPanelWidget> {
                                   badgeScale: s,
                                 ),
                                 TextSpan(
-                                  text: '${msg.username} ',
+                                  text: '${msg.formattedUsername} ',
                                   style: TextStyle(
                                     fontSize: 14 * s,
                                     fontWeight: FontWeight.w600,
@@ -158,7 +158,7 @@ class MentionsPanelWidgetState extends State<MentionsPanelWidget> {
                                   badgeScale: s,
                                 ),
                                 TextSpan(
-                                  text: '${msg.username}: ',
+                                  text: '${msg.formattedUsername}: ',
                                   style: TextStyle(
                                     fontSize: 14 * s,
                                     fontWeight: FontWeight.w600,
@@ -177,8 +177,8 @@ class MentionsPanelWidgetState extends State<MentionsPanelWidget> {
                               ],
                             ],
                             semanticsLabel: msg.isHighlighted
-                                ? 'Mention: $ts ${msg.username}: ${msg.text}'
-                                : '$ts ${msg.username}: ${msg.text}',
+                                ? 'Mention: $ts ${msg.formattedUsername}: ${msg.text}'
+                                : '$ts ${msg.formattedUsername}: ${msg.text}',
                           );
                         },
                       ),

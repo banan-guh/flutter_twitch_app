@@ -497,7 +497,7 @@ class _HomeScreenState extends State<HomeScreen>
       _channelMessages[channel]!.insert(
         0,
         TwitchMessage(
-          username: '',
+          login: '',
           text: text,
           isSystem: true,
           channel: channel,
@@ -601,7 +601,7 @@ class _HomeScreenState extends State<HomeScreen>
                 final ts =
                     '${msg.timestamp.toLocal().hour.toString().padLeft(2, '0')}:${msg.timestamp.toLocal().minute.toString().padLeft(2, '0')}';
                 Clipboard.setData(
-                  ClipboardData(text: '$ts ${msg.username}: ${msg.text}'),
+                  ClipboardData(text: '$ts ${msg.formattedUsername}: ${msg.text}'),
                 );
                 Navigator.pop(ctx);
               },
@@ -640,7 +640,7 @@ class _HomeScreenState extends State<HomeScreen>
     _focusNode.requestFocus();
 
     final loadingMsg = TwitchMessage(
-      username: '',
+      login: '',
       text: 'Loading chat history...',
       isSystem: true,
       channel: name,
@@ -1679,7 +1679,7 @@ class _HomeScreenState extends State<HomeScreen>
                     children: [
                       ..._buildBadgeSpans(channel, msg, badgeScale: s),
                       TextSpan(
-                        text: msg.isAction ? '${msg.username} ' : '${msg.username}: ',
+                        text: msg.isAction ? '${msg.formattedUsername} ' : '${msg.formattedUsername}: ',
                         style: TextStyle(
                           fontSize: 14 * s,
                           fontWeight: FontWeight.w600,
@@ -1687,7 +1687,7 @@ class _HomeScreenState extends State<HomeScreen>
                           decoration: TextDecoration.none,
                         ),
                         recognizer: TapGestureRecognizer()
-                          ..onTap = () => _showUserProfile(msg.username, msg.userId),
+                          ..onTap = () => _showUserProfile(msg.login, msg.userId),
                       ),
                       if (msg.isAction)
                         ..._buildMessageSpans(
@@ -1707,8 +1707,8 @@ class _HomeScreenState extends State<HomeScreen>
                         : null,
                     onLongPress: () => _showMessageMenu(msg),
                     semanticsLabel: msg.isHighlighted
-                        ? 'Mention: $ts ${msg.username}: ${msg.text}'
-                        : '$ts ${msg.username}: ${msg.text}',
+                        ? 'Mention: $ts ${msg.formattedUsername}: ${msg.text}'
+                        : '$ts ${msg.formattedUsername}: ${msg.text}',
                   );
                 }
 

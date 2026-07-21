@@ -52,7 +52,7 @@ class MessageInput extends StatelessWidget {
                       TextSpan(
                         children: [
                           TextSpan(
-                            text: 'Replying to ${replyToMsg!.username}',
+                            text: 'Replying to ${replyToMsg!.formattedUsername}',
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,

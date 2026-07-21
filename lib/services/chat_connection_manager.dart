@@ -153,7 +153,7 @@ class ChatConnectionManager {
     }
     var count = 0;
     for (final msg in msgs) {
-      if (msg.username.toLowerCase() == username.toLowerCase() &&
+      if (msg.login == username.toLowerCase() &&
           !msg.isSystem &&
           !msg.deleted) {
         msg.deleted = true;
@@ -246,14 +246,14 @@ class ChatConnectionManager {
     }
 
     final msg = TwitchMessage(
-      username: login,
+      login: login,
       text: text,
       channel: channel,
       messageId: effectiveId,
       color: getCurrentUserColor() ?? pickColor(login.toLowerCase()),
       userId: getCurrentUserId(),
       replyToParentId: replyTo?.messageId,
-      replyToUser: replyTo?.username,
+      replyToUser: replyTo?.displayName,
       replyToText: replyTo?.text,
     );
     channelMessages.putIfAbsent(channel, () => []);
@@ -601,7 +601,7 @@ class ChatConnectionManager {
       for (final msg in msgs) {
         if (msg.messageId == event.messageId && !msg.isSystem) {
           msg.deleted = true;
-          deletedUser = msg.username;
+          deletedUser = msg.login;
           deletedText = msg.text;
           break;
         }
@@ -661,7 +661,7 @@ class ChatConnectionManager {
         final lowerLogin = login.toLowerCase();
         for (final entry in channelMessages.entries) {
           for (final msg in entry.value) {
-            if (msg.username.toLowerCase() == lowerLogin && !msg.isSystem) {
+            if (msg.login == lowerLogin && !msg.isSystem) {
               msg.color = color;
             }
           }
@@ -743,8 +743,8 @@ class ChatConnectionManager {
   void onMessage(TwitchMessage msg) {
     if (!mounted) return;
 
-    if (!msg.isSystem && msg.username.isNotEmpty && msg.channel != null) {
-      userStore.addUser(msg.channel!, msg.username);
+    if (!msg.isSystem && msg.login.isNotEmpty && msg.channel != null) {
+      userStore.addUser(msg.channel!, msg.displayName);
     }
 
     final channel = msg.channel;
@@ -768,7 +768,7 @@ class ChatConnectionManager {
 
     if (msg.messageId != null &&
         getCurrentUserLogin() != null &&
-        msg.username.toLowerCase() == getCurrentUserLogin()!.toLowerCase()) {
+        msg.login == getCurrentUserLogin()!.toLowerCase()) {
       String? pendingKey;
       for (final entry in pendingLocals.entries) {
         if (entry.value.channel == channel &&
@@ -866,6 +866,14 @@ class ChatConnectionManager {
       userStore.addUser(channel, displayName);
     }
 
+    final ircPrefLogin = ircMsg.prefix != null && ircMsg.prefix!.contains('!')
+        ? ircMsg.prefix!.substring(0, ircMsg.prefix!.indexOf('!'))
+        : null;
+    final user = TwitchMessage.resolveUser(
+      login: ircPrefLogin ?? getCurrentUserLogin() ?? displayName,
+      displayName: displayName.isNotEmpty ? displayName : null,
+    );
+
     final colorTag = ircMsg.tags['color'];
     if (colorTag != null && colorTag.isNotEmpty) {
       setCurrentUserColor(colorTag);
@@ -916,7 +924,7 @@ class ChatConnectionManager {
     final color =
         ircMsg.tags['color'] != null && ircMsg.tags['color']!.isNotEmpty
         ? ircMsg.tags['color']!
-        : pickColor(displayName.toLowerCase());
+        : pickColor(user.login);
 
     List<EmotePosition>? emotePositions;
     final emotesTag = ircMsg.tags['emotes'];
@@ -952,7 +960,8 @@ class ChatConnectionManager {
     }
 
     final msg = TwitchMessage(
-      username: displayName,
+      login: user.login,
+      displayName: user.displayName,
       text: strippedText,
       channel: channel,
       messageId: messageId,

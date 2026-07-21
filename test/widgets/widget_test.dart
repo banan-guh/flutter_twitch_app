@@ -94,14 +94,14 @@ class _FakeRecentMessagesService extends RecentMessagesService {
     final now = DateTime.now();
     return [
       TwitchMessage(
-        username: 'alice',
+        login: 'alice',
         text: 'hello world',
         channel: channel,
         messageId: 'root-1',
         timestamp: now.subtract(const Duration(minutes: 5)),
       ),
       TwitchMessage(
-        username: 'bob',
+        login: 'bob',
         text: 'hi alice',
         channel: channel,
         messageId: 'reply-1',
@@ -112,7 +112,7 @@ class _FakeRecentMessagesService extends RecentMessagesService {
         isHistory: true,
       ),
       TwitchMessage(
-        username: 'charlie',
+        login: 'charlie',
         text: 'standalone post',
         channel: channel,
         messageId: 'standalone-1',
@@ -283,7 +283,7 @@ void main() {
     // EventSub messages still appear in view-only mode.
     fakeEventSub.emitMessage(
       TwitchMessage(
-        username: 'xqc',
+        login: 'xqc',
         text: 'hello chat',
         channel: 'xqc',
         messageId: 'm1',
@@ -405,7 +405,7 @@ void main() {
       // 'a' is the selected channel; emit a mention there.
       eventSub.emitMessage(
         TwitchMessage(
-          username: 'bob',
+          login: 'bob',
           text: 'hey @me how are you',
           channel: 'a',
           messageId: 'm1',
@@ -446,7 +446,7 @@ void main() {
 
       eventSub.emitMessage(
         TwitchMessage(
-          username: 'carol',
+          login: 'carol',
           text: 'hello @me',
           channel: 'b',
           messageId: 'm2',
@@ -486,7 +486,7 @@ void main() {
 
       eventSub.emitMessage(
         TwitchMessage(
-          username: 'carol',
+          login: 'carol',
           text: 'hello @me',
           channel: 'b',
           messageId: 'm3',
@@ -542,7 +542,7 @@ void main() {
 
       eventSub.emitMessage(
         TwitchMessage(
-          username: 'carol',
+          login: 'carol',
           text: 'hello @me',
           channel: 'b',
           messageId: 'm4',
@@ -586,7 +586,7 @@ void main() {
 
       eventSub.emitMessage(
         TwitchMessage(
-          username: 'carol',
+          login: 'carol',
           text: 'hello @me',
           channel: 'b',
           messageId: 'm5',
@@ -743,7 +743,7 @@ void main() {
 
     fakeEventSub.emitMessage(
       TwitchMessage(
-        username: 'xqc',
+        login: 'xqc',
         text: 'hello',
         channel: 'xqc',
         messageId: 'm1',
@@ -831,14 +831,14 @@ void main() {
       (WidgetTester tester) async {
         const channel = 'testchannel';
         final parent = TwitchMessage(
-          username: 'alice',
+          login: 'alice',
           text: 'parent msg',
           messageId: 'p1',
           timestamp: now.subtract(const Duration(minutes: 5)),
           channel: channel,
         );
         final child = TwitchMessage(
-          username: 'bob',
+          login: 'bob',
           text: 'child msg',
           messageId: 'c1',
           replyToParentId: 'p1',
@@ -869,14 +869,14 @@ void main() {
     ) async {
       const channel = 'testchannel';
       final parent = TwitchMessage(
-        username: 'alice',
+        login: 'alice',
         text: 'parent msg',
         messageId: 'p1',
         timestamp: now.subtract(const Duration(minutes: 5)),
         channel: channel,
       );
       final child = TwitchMessage(
-        username: 'bob',
+        login: 'bob',
         text: 'child msg',
         messageId: 'c1',
         replyToParentId: 'p1',
@@ -904,14 +904,14 @@ void main() {
       (WidgetTester tester) async {
         const channel = 'testchannel';
         final parent = TwitchMessage(
-          username: 'alice',
+          login: 'alice',
           text: 'parent msg',
           messageId: 'p1',
           timestamp: now.subtract(const Duration(minutes: 5)),
           channel: channel,
         );
         final child1 = TwitchMessage(
-          username: 'bob',
+          login: 'bob',
           text: 'child one',
           messageId: 'c1',
           replyToParentId: 'p1',
@@ -922,7 +922,7 @@ void main() {
           channel: channel,
         );
         final child2 = TwitchMessage(
-          username: 'charlie',
+          login: 'charlie',
           text: 'child two',
           messageId: 'c2',
           replyToParentId: 'p1',
@@ -956,7 +956,7 @@ void main() {
       (WidgetTester tester) async {
         const channel = 'testchannel';
         final standalone = TwitchMessage(
-          username: 'charlie',
+          login: 'charlie',
           text: 'standalone msg',
           messageId: 's1',
           timestamp: now.subtract(const Duration(minutes: 3)),
@@ -977,7 +977,7 @@ void main() {
       (WidgetTester tester) async {
         const channel = 'testchannel';
         final parent = TwitchMessage(
-          username: 'alice',
+          login: 'alice',
           text: 'original post',
           messageId: 'p1',
           timestamp: now.subtract(const Duration(minutes: 5)),
@@ -995,7 +995,7 @@ void main() {
 
         eventSub.emitMessage(
           TwitchMessage(
-            username: 'dave',
+            login: 'dave',
             text: 'live reply text',
             messageId: 'live1',
             channel: channel,
@@ -1022,14 +1022,14 @@ void main() {
       (WidgetTester tester) async {
         const channel = 'testchannel';
         final root = TwitchMessage(
-          username: 'alice',
+          login: 'alice',
           text: 'root level',
           messageId: 'd1',
           timestamp: now.subtract(const Duration(minutes: 7)),
           channel: channel,
         );
         final mid = TwitchMessage(
-          username: 'bob',
+          login: 'bob',
           text: 'mid level',
           messageId: 'd2',
           replyToParentId: 'd1',
@@ -1040,7 +1040,7 @@ void main() {
           channel: channel,
         );
         final leaf = TwitchMessage(
-          username: 'charlie',
+          login: 'charlie',
           text: 'leaf level',
           messageId: 'd3',
           replyToParentId: 'd2',
@@ -1071,7 +1071,7 @@ void main() {
       (WidgetTester tester) async {
         const channel = 'testchannel';
         final orphan = TwitchMessage(
-          username: 'bob',
+          login: 'bob',
           text: 'orphan msg',
           messageId: 'o1',
           replyToParentId: 'nonexistent',
@@ -1098,7 +1098,7 @@ void main() {
       (WidgetTester tester) async {
         const channel = 'testchannel';
         final parent = TwitchMessage(
-          username: 'alice',
+          login: 'alice',
           text: 'original msg',
           messageId: 'p1',
           timestamp: now.subtract(const Duration(minutes: 5)),
@@ -1123,7 +1123,7 @@ void main() {
 
         eventSub.emitMessage(
           TwitchMessage(
-            username: 'bob',
+            login: 'bob',
             text: 'my reply',
             channel: channel,
             messageId: 'sent1',
@@ -1153,14 +1153,14 @@ void main() {
     ) async {
       const channel = 'testchannel';
       final parent = TwitchMessage(
-        username: 'alice',
+        login: 'alice',
         text: 'parent msg',
         messageId: 'p1',
         timestamp: now.subtract(const Duration(minutes: 5)),
         channel: channel,
       );
       final child = TwitchMessage(
-        username: 'bob',
+        login: 'bob',
         text: 'child msg',
         messageId: 'c1',
         replyToParentId: 'p1',
@@ -1397,13 +1397,13 @@ void main() {
         final irc = _FakeIrcService();
         final recent = _ConfigurableRecentMessagesService([
           TwitchMessage(
-            username: 'bob',
+            login: 'bob',
             text: 'i am a bad person',
             channel: 'testchannel',
             messageId: 'bad-1',
           ),
           TwitchMessage(
-            username: 'gooduser',
+            login: 'gooduser',
             text: 'i am nice',
             channel: 'testchannel',
             messageId: 'good-1',
@@ -1439,14 +1439,14 @@ void main() {
       final ircRead = _FakeIrcReadService();
       final recent = _ConfigurableRecentMessagesService([
         TwitchMessage(
-          username: 'testuser',
+          login: 'testuser',
           text: 'hello from me',
           channel: 'testchannel',
           messageId: 'own-1',
           color: '#FF0000',
         ),
         TwitchMessage(
-          username: 'otheruser',
+          login: 'otheruser',
           text: 'hello from other',
           channel: 'testchannel',
           messageId: 'other-1',
@@ -1679,7 +1679,7 @@ void main() {
       final history = List.generate(
         15,
         (i) => TwitchMessage(
-          username: 'user$i',
+          login: 'user$i',
           text: 'msg $i',
           messageId: 'm$i',
           timestamp: DateTime.now().subtract(Duration(minutes: 15 - i)),
@@ -1706,14 +1706,14 @@ void main() {
     ) async {
       const channel = 'testchannel';
       final parent = TwitchMessage(
-        username: 'alice',
+        login: 'alice',
         text: 'thread root',
         messageId: 'p1',
         timestamp: DateTime.now().subtract(const Duration(minutes: 12)),
         channel: channel,
       );
       final child = TwitchMessage(
-        username: 'bob',
+        login: 'bob',
         text: 'thread reply',
         messageId: 'c1',
         replyToParentId: 'p1',
@@ -1726,7 +1726,7 @@ void main() {
       final filler = List.generate(
         9,
         (i) => TwitchMessage(
-          username: 'user$i',
+          login: 'user$i',
           text: 'filler $i',
           messageId: 'f$i',
           timestamp: DateTime.now().subtract(Duration(minutes: 10 - i)),
@@ -1745,6 +1745,9 @@ void main() {
       await tester.pump();
       await tester.pump();
 
+      final taken = tester.takeException();
+      if (taken != null) debugPrint('TAKEN EXCEPTION: $taken');
+
       expect(find.textContaining('thread root'), findsOneWidget);
       expect(find.textContaining('thread reply'), findsOneWidget);
     });
@@ -1754,14 +1757,14 @@ void main() {
     ) async {
       const channel = 'testchannel';
       final parent = TwitchMessage(
-        username: 'alice',
+        login: 'alice',
         text: 'thread root',
         messageId: 'p2',
         timestamp: DateTime.now().subtract(const Duration(minutes: 14)),
         channel: channel,
       );
       final child = TwitchMessage(
-        username: 'bob',
+        login: 'bob',
         text: 'thread reply',
         messageId: 'c2',
         replyToParentId: 'p2',
@@ -1774,7 +1777,7 @@ void main() {
       final filler = List.generate(
         13,
         (i) => TwitchMessage(
-          username: 'user$i',
+          login: 'user$i',
           text: 'filler $i',
           messageId: 'g$i',
           timestamp: DateTime.now().subtract(Duration(minutes: 12 - i)),
@@ -1802,14 +1805,14 @@ void main() {
     ) async {
       const channel = 'testchannel';
       final parent = TwitchMessage(
-        username: 'alice',
+        login: 'alice',
         text: 'thread root',
         messageId: 'p3',
         timestamp: DateTime.now().subtract(const Duration(minutes: 12)),
         channel: channel,
       );
       final child = TwitchMessage(
-        username: 'bob',
+        login: 'bob',
         text: 'thread reply',
         messageId: 'c3',
         replyToParentId: 'p3',
@@ -1822,7 +1825,7 @@ void main() {
       final filler = List.generate(
         9,
         (i) => TwitchMessage(
-          username: 'user$i',
+          login: 'user$i',
           text: 'filler $i',
           messageId: 'h$i',
           timestamp: DateTime.now().subtract(Duration(minutes: 10 - i)),
@@ -1849,7 +1852,7 @@ void main() {
       for (int i = 1; i <= 3; i++) {
         eventSub.emitMessage(
           TwitchMessage(
-            username: 'newuser',
+            login: 'newuser',
             text: 'new message $i',
             messageId: 'new$i',
             timestamp: DateTime.now(),
@@ -1874,7 +1877,7 @@ void main() {
         final manyMessages = List.generate(
           50,
           (i) => TwitchMessage(
-            username: 'user$i',
+            login: 'user$i',
             text: 'message number $i with some extra text to fill the line',
             channel: 'testchannel',
             messageId: 'msg-$i',
@@ -1929,7 +1932,7 @@ void main() {
         final manyMessages = List.generate(
           50,
           (i) => TwitchMessage(
-            username: 'user$i',
+            login: 'user$i',
             text: 'message number $i',
             channel: 'testchannel',
             messageId: 'msg-$i',
@@ -1965,7 +1968,7 @@ void main() {
         // Emit a new message while paused
         fakeEventSub.emitMessage(
           TwitchMessage(
-            username: 'newuser',
+            login: 'newuser',
             text: 'new message while paused',
             channel: 'testchannel',
             messageId: 'new-msg',
@@ -2000,7 +2003,7 @@ void main() {
         final manyMessages = List.generate(
           50,
           (i) => TwitchMessage(
-            username: 'user$i',
+            login: 'user$i',
             text: 'message number $i',
             channel: 'testchannel',
             messageId: 'msg-$i',
@@ -2035,7 +2038,7 @@ void main() {
 
         // Emit a system message while paused
         final systemMsg = TwitchMessage(
-          username: '',
+          login: '',
           text: 'System notice while paused',
           isSystem: true,
           channel: 'testchannel',
@@ -2139,7 +2142,7 @@ void main() {
 
       eventSub.emitMessage(
         TwitchMessage(
-          username: 'UserOne',
+          login: 'UserOne',
           text: 'hello chat',
           channel: 'xqc',
           messageId: 'm1',
@@ -2191,7 +2194,7 @@ void main() {
 
       eventSub.emitMessage(
         TwitchMessage(
-          username: 'UserOne',
+          login: 'UserOne',
           text: 'hello chat',
           channel: 'xqc',
           messageId: 'm1',

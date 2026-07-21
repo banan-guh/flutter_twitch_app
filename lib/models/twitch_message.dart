@@ -17,7 +17,8 @@ class EmotePosition {
 
 class TwitchMessage {
   final DateTime timestamp;
-  final String username;
+  final String login;
+  final String displayName;
   final String text;
   String? color;
   final bool isSystem;
@@ -37,9 +38,29 @@ class TwitchMessage {
   final String? sourceBroadcasterName;
   List<InlineSpan>? cachedSpans;
   Color? get bodyColor => isSystem ? Colors.grey : null;
+
+  String get formattedUsername {
+    if (displayName.toLowerCase() == login.toLowerCase()) {
+      return displayName;
+    }
+    return '$login($displayName)';
+  }
+
+  static ({String login, String displayName}) resolveUser({
+    required String login,
+    String? displayName,
+  }) {
+    final lowerLogin = login.toLowerCase();
+    final display = (displayName != null && displayName.isNotEmpty)
+        ? displayName
+        : lowerLogin;
+    return (login: lowerLogin, displayName: display);
+  }
+
   TwitchMessage({
-    required this.username,
+    required this.login,
     required this.text,
+    String? displayName,
     this.color,
     DateTime? timestamp,
     this.isSystem = false,
@@ -57,5 +78,6 @@ class TwitchMessage {
     this.badges,
     this.sourceBroadcasterId,
     this.sourceBroadcasterName,
-  }) : timestamp = timestamp ?? DateTime.now();
+  }) : timestamp = timestamp ?? DateTime.now(),
+       displayName = displayName ?? login;
 }

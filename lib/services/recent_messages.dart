@@ -32,11 +32,11 @@ class RecentMessagesService {
     }
 
     for (final msg in messages) {
-      if (msg.isSystem && msg.username.isNotEmpty) {
-        final targetUser = msg.username.toLowerCase();
+      if (msg.isSystem && msg.login.isNotEmpty) {
+        final targetUser = msg.login;
         for (final other in messages) {
           if (!other.isSystem &&
-              other.username.toLowerCase() == targetUser &&
+              other.login == targetUser &&
               !msg.timestamp.isBefore(other.timestamp)) {
             other.deleted = true;
           }
@@ -62,6 +62,7 @@ class RecentMessagesService {
     if (idx >= raw.length || raw[idx] != ':') return null;
     final sourceEnd = raw.indexOf(' ', idx);
     if (sourceEnd == -1) return null;
+    final source = raw.substring(idx + 1, sourceEnd);
     idx = sourceEnd + 1;
 
     final cmdEnd = raw.indexOf(' ', idx);
@@ -82,8 +83,15 @@ class RecentMessagesService {
         : raw.substring(idx);
 
     final tags = _parseTags(tagsPart ?? '');
-    final username = tags['display-name'] ?? '';
+    final displayName = tags['display-name'] ?? '';
     final color = tags['color'];
+
+    final ircLogin = source.contains('!') ? source.substring(0, source.indexOf('!')) : source;
+    final user = TwitchMessage.resolveUser(
+      login: ircLogin,
+      displayName: displayName.isNotEmpty ? displayName : null,
+    );
+
     final tsMs = tags['rm-received-ts'];
     final messageId = tags['id'];
 
@@ -175,7 +183,7 @@ class RecentMessagesService {
       if (badges.isEmpty) badges = null;
     }
 
-    if (username.isEmpty && displayText.isEmpty) return null;
+    if (displayName.isEmpty && displayText.isEmpty) return null;
 
     final ts = tsMs != null
         ? DateTime.fromMillisecondsSinceEpoch(int.tryParse(tsMs) ?? 0)
@@ -183,10 +191,11 @@ class RecentMessagesService {
 
     final effectiveColor = (color != null && color.isNotEmpty)
         ? color
-        : pickColor(username);
+        : pickColor(user.login);
 
     return TwitchMessage(
-      username: username,
+      login: user.login,
+      displayName: user.displayName,
       text: displayText,
       color: effectiveColor,
       timestamp: ts,
@@ -233,7 +242,7 @@ class RecentMessagesService {
         : DateTime.now();
 
     return TwitchMessage(
-      username: targetUser,
+      login: targetUser,
       text: text,
       isSystem: true,
       channel: channel,

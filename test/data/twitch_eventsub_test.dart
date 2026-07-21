@@ -141,7 +141,7 @@ void main() {
       );
 
       expect(messages, hasLength(1));
-      expect(messages[0].username, 'testuser');
+      expect(messages[0].login, 'testuser');
       expect(messages[0].text, 'hello world');
       expect(messages[0].messageId, 'msg-1');
       expect(messages[0].channel, 'testchannel');
@@ -179,7 +179,7 @@ void main() {
         ),
       );
 
-      expect(messages[0].username, 'unknown');
+      expect(messages[0].login, 'unknown');
     });
 
     test('handles missing message text', () async {

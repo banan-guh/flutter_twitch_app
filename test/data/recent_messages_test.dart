@@ -8,7 +8,7 @@ void main() {
           '@display-name=forsen;color=#FF0000;id=abc-123;rm-received-ts=1700000000000 :forsen!forsen@forsen.tmi.twitch.tv PRIVMSG #xqc :Hello chat';
       final msg = RecentMessagesService.parseIrcLine(raw);
       expect(msg, isNotNull);
-      expect(msg!.username, 'forsen');
+      expect(msg!.login, 'forsen');
       expect(msg.text, 'Hello chat');
       expect(msg.color, '#FF0000');
       expect(msg.messageId, 'abc-123');
@@ -21,7 +21,7 @@ void main() {
           '@display-name=forsen;id=def-456;rm-received-ts=1700000000000 :forsen!forsen@forsen.tmi.twitch.tv PRIVMSG #xqc :no color';
       final msg = RecentMessagesService.parseIrcLine(raw);
       expect(msg, isNotNull);
-      expect(msg!.username, 'forsen');
+      expect(msg!.login, 'forsen');
       expect(msg.text, 'no color');
       expect(msg.color, isNotNull);
       expect(msg.color!.startsWith('#'), isTrue);
@@ -158,7 +158,7 @@ void main() {
           '@display-name=testuser;id=single-1;rm-received-ts=1700000000000 :testuser!testuser@testuser.tmi.twitch.tv PRIVMSG #xqc eerm';
       final msg = RecentMessagesService.parseIrcLine(raw);
       expect(msg, isNotNull);
-      expect(msg!.username, 'testuser');
+      expect(msg!.login, 'testuser');
       expect(msg.text, 'eerm');
     });
   });

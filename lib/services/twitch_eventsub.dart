@@ -206,6 +206,7 @@ class EventSubService {
     final channel = _channelFromPayload(msg);
 
     final chatter = event['chatter_user_name'] as String? ?? 'unknown';
+    final chatterLogin = event['chatter_user_login'] as String?;
     final chatterId = event['chatter_user_id'] as String?;
     final messageData = event['message'] as Map<String, dynamic>?;
     final text = messageData?['text'] as String? ?? '';
@@ -213,6 +214,11 @@ class EventSubService {
     final messageId = event['message_id'] as String?;
     final sourceId = event['source_broadcaster_user_id'] as String?;
     final sourceName = event['source_broadcaster_user_name'] as String?;
+
+    final user = TwitchMessage.resolveUser(
+      login: chatterLogin ?? chatter,
+      displayName: chatter,
+    );
 
     // EventSub wraps /me messages in \x01ACTION ... \x01
     bool isAction = false;
@@ -290,7 +296,8 @@ class EventSubService {
 
     _messageController.add(
       TwitchMessage(
-        username: chatter,
+        login: user.login,
+        displayName: user.displayName,
         text: displayText,
         color: color,
         isAction: isAction,
